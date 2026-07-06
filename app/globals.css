@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: var(--font-pixel), monospace;
+  --font-mono: var(--font-pixel), monospace;
+  --color-background: #0f172a;
+  --color-foreground: #f8fafc;
+  --color-primary: #f97316;
+  --color-primary-foreground: #0f172a;
+  --color-accent: #3b82f6;
+  --color-accent-foreground: #f8fafc;
+  --color-danger: #ef4444;
+  --color-muted: #1e293b;
+  --color-muted-foreground: #94a3b8;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+canvas {
+  image-rendering: pixelated;
+}
