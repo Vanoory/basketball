@@ -53,6 +53,8 @@ export interface PlayerData {
   crossLean: number // sideways lean for crossover animation
   celebrateT: number
   helpDef: boolean // temporarily rotating onto ball handler
+  screenedT: number // > 0 => caught on a screen / body, slowed down
+  trailing: boolean // defender got beaten and is sprinting to recover
   colors: { jersey: string; shorts: string; skin: string; hair: string }
 }
 
@@ -132,6 +134,8 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     crossLean: 0,
     celebrateT: 0,
     helpDef: false,
+    screenedT: 0,
+    trailing: false,
     colors: team === 0 ? TEAM0[id % 3] : TEAM1[id % 3],
   }
 }

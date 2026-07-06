@@ -103,6 +103,63 @@ function steerToward(
   return d
 }
 
+// ---------- Body collisions (screens work because bodies are solid) ----------
+const PLAYER_RADIUS = 0.38
+function resolvePlayerCollisions() {
+  const R2 = PLAYER_RADIUS * 2
+  for (let i = 0; i < G.players.length; i++) {
+    const a = G.players[i]
+    if (a.stunT > 0 || a.dunking || !a.grounded) continue
+    for (let j = i + 1; j < G.players.length; j++) {
+      const b = G.players[j]
+      if (b.stunT > 0 || b.dunking || !b.grounded) continue
+      let dx = b.pos.x - a.pos.x
+      let dz = b.pos.z - a.pos.z
+      const d = Math.hypot(dx, dz)
+      if (d >= R2 || d < 0.0001) continue
+      dx /= d
+      dz /= d
+      const push = (R2 - d) / 2
+      a.pos.x -= dx * push
+      a.pos.z -= dz * push
+      b.pos.x += dx * push
+      b.pos.z += dz * push
+      clampCourt(a.pos, 0.3)
+      clampCourt(b.pos, 0.3)
+
+      // Kill velocity into each other (bodies are solid)
+      const avn = a.vel.x * dx + a.vel.z * dz
+      if (avn > 0) {
+        a.vel.x -= dx * avn * 0.85
+        a.vel.z -= dz * avn * 0.85
+      }
+      const bvn = b.vel.x * dx + b.vel.z * dz
+      if (bvn < 0) {
+        b.vel.x -= dx * bvn * 0.85
+        b.vel.z -= dz * bvn * 0.85
+      }
+
+      // SCREEN: a defender slamming into a near-stationary offensive body
+      // (not the handler) gets stuck on it for a moment.
+      hitScreenCheck(a, b, avn)
+      hitScreenCheck(b, a, -bvn)
+    }
+  }
+}
+
+function hitScreenCheck(runner: PlayerData, wall: PlayerData, vInto: number) {
+  if (runner.team === wall.team) return
+  if (runner.team === G.possession) return // runner must be a defender
+  if (wall.id === G.ball.holder) return // the handler is not a screener
+  if (Math.hypot(wall.vel.x, wall.vel.z) > 2.4) return // screener must be set
+  if (vInto < 1.1) return // needs closing speed to get "caught"
+  if (runner.screenedT > 0) return
+  runner.screenedT = 0.45 + Math.min(vInto * 0.09, 0.45)
+  runner.reactT = Math.max(runner.reactT, 0.35) // loses track of his man
+  if (runner.id !== G.controlled && Math.random() < 0.4)
+    setMessage('SCREEN!', 0.9)
+}
+
 // ---------- Knockdown (ankle breaker) ----------
 function knockDown(def: PlayerData, msg = 'ANKLES GONE!') {
   if (def.stunT > 0 || !def.grounded || def.dunking) return
@@ -143,15 +200,15 @@ function tryAnkleBreak(handler: PlayerData, newDirX: number, newDirZ: number) {
     // Full knockdown needs a committed (moving) defender + sharp cut.
     // A staggering stumble can happen even against a set defender.
     let fallChance =
-      defSpeed < 1.2
+      defSpeed < 2.0
         ? 0
-        : 0.2 + sharpness * 0.35 + Math.min(defSpeed / 12, 0.25)
-    let stumbleChance = 0.4 + sharpness * 0.35
+        : 0.08 + sharpness * 0.18 + Math.min(defSpeed / 16, 0.14)
+    let stumbleChance = 0.2 + sharpness * 0.22
     if (isUser) {
-      fallChance = defSpeed < 3.6 ? 0 : fallChance * 0.25
-      stumbleChance *= 0.3
+      fallChance = defSpeed < 4.2 ? 0 : fallChance * 0.2
+      stumbleChance *= 0.25
     }
-    def.ankleCd = isUser ? 2.6 : 1.4 // even on a miss, brief immunity
+    def.ankleCd = isUser ? 3.0 : 2.2 // even on a miss, brief immunity
     const roll = Math.random()
     if (roll < fallChance) {
       knockDown(def)
@@ -259,6 +316,8 @@ function applyReset() {
     p.helpDef = false
     p.cutting = false
     p.celebrateT = 0
+    p.screenedT = 0
+    p.trailing = false
     p.vel.set(0, 0, 0)
     p.facing = Math.PI
     p.aiTimer = 1.5 + Math.random() * 2
@@ -381,26 +440,50 @@ function opennessOf(p: PlayerData) {
 }
 
 // ---------- Block resolution (works for user AND AI jumpers) ----------
+function rejectBall(p: PlayerData, msgUser: string, msgRed: string) {
+  const b = G.ball
+  b.state = 'loose'
+  b.holder = -1
+  b.shotWillScore = false
+  V2.copy(b.pos).sub(RIM).setY(0)
+  if (V2.lengthSq() < 0.01) V2.set(0, 0, 1)
+  V2.normalize()
+  b.vel.set(V2.x * 5.5, 2.4, V2.z * 5.5)
+  p.anim = 'block'
+  p.animT = 0
+  G.camShake = 0.32
+  setMessage(p.team === 0 ? msgUser : msgRed, 1.6)
+}
+
 function checkBlocks() {
   const b = G.ball
-  if (b.state !== 'shot' || b.shotT > 0.45) return
-  const shooter = G.players[b.shooterId]
-  for (const p of G.players) {
-    if (p.team === shooter.team || p.grounded || p.stunT > 0) continue
-    // Hand position at the top of the jump
-    V.set(p.pos.x, p.pos.y + 2.35, p.pos.z)
-    if (V.distanceTo(b.pos) < 0.95) {
-      b.state = 'loose'
-      b.shotWillScore = false
-      V2.copy(b.pos).sub(RIM).setY(0)
-      if (V2.lengthSq() < 0.01) V2.set(0, 0, 1)
-      V2.normalize()
-      b.vel.set(V2.x * 5.5, 2.2, V2.z * 5.5)
-      p.anim = 'block'
-      p.animT = 0
-      G.camShake = 0.3
-      setMessage(p.team === 0 ? 'REJECTED!' : 'BLOCKED BY RED!', 1.6)
-      return
+
+  // Jump shots: swattable early in flight
+  if (b.state === 'shot' && b.shotT <= 0.45) {
+    const shooter = G.players[b.shooterId]
+    for (const p of G.players) {
+      if (p.team === shooter.team || p.grounded || p.stunT > 0) continue
+      // Hand position at the top of the jump
+      V.set(p.pos.x, p.pos.y + 2.35, p.pos.z)
+      if (V.distanceTo(b.pos) < 0.95) {
+        rejectBall(p, 'REJECTED!', 'BLOCKED BY RED!')
+        return
+      }
+    }
+    return
+  }
+
+  // Dunks: meet the ball at the rim before the slam finishes
+  if (b.state === 'dunk' && b.holder >= 0) {
+    const dunker = G.players[b.holder]
+    if (dunker.dunkT < 0.18 || dunker.dunkT > 0.55) return
+    for (const p of G.players) {
+      if (p.team === dunker.team || p.grounded || p.stunT > 0) continue
+      V.set(p.pos.x, p.pos.y + 2.35, p.pos.z)
+      if (V.distanceTo(b.pos) < 1.0) {
+        rejectBall(p, 'DUNK DENIED!', 'DENIED AT THE RIM!')
+        return
+      }
     }
   }
 }
@@ -476,12 +559,19 @@ export default function GameLoop() {
         me.animT = 0
         me.vy = 6.5
         me.grounded = false
+        const moveSpeed = me.speed
         me.vel.multiplyScalar(0.25)
         G.meterActive = true
         G.meterValue = 0
         G.shotDist = d
         const contest = Math.max(0, 1.6 - nearestOpponentDist(me)) / 1.6
-        const half = Math.max(0.045, 0.11 - d * 0.005 - contest * 0.045)
+        // Green window shrinks with: distance, contest, and shooting on
+        // the move. A sprinting contested deep three is a sliver; a set
+        // open mid-range look is generous.
+        const half = Math.max(
+          0.022,
+          0.115 - d * 0.005 - contest * 0.04 - moveSpeed * 0.0085,
+        )
         G.meterWindow = [
           METER_PERFECT_CENTER - half,
           METER_PERFECT_CENTER + half,
@@ -587,6 +677,7 @@ export default function GameLoop() {
         }
       }
       if (p.ankleCd > 0) p.ankleCd -= dt
+      if (p.screenedT > 0) p.screenedT -= dt
       if (p.celebrateT > 0) {
         p.celebrateT -= dt
         if (p.grounded && p.stunT <= 0 && !p.dunking) p.anim = 'celebrate'
@@ -611,6 +702,7 @@ export default function GameLoop() {
       for (const p of G.players) {
         if (p.dunking) updateDunk(p, dt)
       }
+      resolvePlayerCollisions()
       checkBlocks()
       updateBall(dt)
 
@@ -851,7 +943,7 @@ export default function GameLoop() {
 
     if (p.aiTimer <= 0) {
       const roll = Math.random()
-      if (roll < 0.28 && !p.cutting) {
+      if (roll < 0.22 && !p.cutting) {
         // Backdoor cut to the rim
         p.cutting = true
         p.spot.set(
@@ -860,6 +952,26 @@ export default function GameLoop() {
           RIM_GROUND.z + 1.6 + Math.random(),
         )
         p.aiTimer = 1.2 + Math.random() * 0.6
+      } else if (roll < 0.42 && handler && handler.team === p.team) {
+        // SET A SCREEN: plant right on the hip of the handler's defender
+        const defOnBall = G.players.find(
+          (o) =>
+            o.team !== p.team &&
+            o.stunT <= 0 &&
+            o.pos.distanceTo(handler.pos) < 3.2,
+        )
+        if (defOnBall) {
+          V3.copy(handler.pos)
+            .sub(defOnBall.pos)
+            .setY(0)
+            .normalize()
+            .multiplyScalar(-0.55)
+          p.spot.copy(defOnBall.pos).add(V3)
+          p.cutting = false
+          p.aiTimer = 1.8 + Math.random()
+        } else {
+          p.aiTimer = 0.4
+        }
       } else {
         // Relocate to the most open perimeter spot
         p.cutting = false
@@ -980,6 +1092,41 @@ export default function GameLoop() {
         : 0.2 + Math.random() * 0.15
     }
 
+    const dMan = p.pos.distanceTo(man.pos)
+
+    // TRAILING: if the man blew by (closer to the rim by a real margin, or
+    // we got hung up on a screen), the defender loses contact and has to
+    // sprint back on the recovery angle - just like real defense.
+    const manToRim = distToRim(man.pos)
+    const meToRim = distToRim(p.pos)
+    const gotBeat =
+      p.screenedT > 0 || (manToRim < meToRim - 0.7 && dMan > 1.6)
+    p.trailing = gotBeat
+
+    if (p.screenedT > 0) {
+      // Stuck on the screen: grinding, barely moving
+      applyMove(p, 0, 0, 0, 10, dt)
+      p.anim = 'shuffle'
+      if (dMan < 5)
+        p.facing = Math.atan2(man.pos.x - p.pos.x, man.pos.z - p.pos.z)
+      return
+    }
+
+    if (gotBeat && manToRim > 1.5) {
+      // Recovery sprint to a point BETWEEN the man and the rim (not to the
+      // man himself) - the real way to get back in front.
+      V3.copy(RIM_GROUND).sub(man.pos).normalize()
+      V3.multiplyScalar(Math.min(1.6, manToRim * 0.45)).add(man.pos)
+      // Lead ahead of where he is driving
+      V3.x += man.vel.x * 0.22
+      V3.z += man.vel.z * 0.22
+      steerToward(p, V3, 7.3, 10.5, dt, 0.15)
+      if (p.grounded && p.speed > 1.5) p.anim = 'run'
+      if (dMan < 5)
+        p.facing = Math.atan2(man.pos.x - p.pos.x, man.pos.z - p.pos.z)
+      return
+    }
+
     const distToTarget = p.pos.distanceTo(p.reactTarget)
     const closeOut = distToTarget > 2.4
     const maxSp = closeOut ? 6.6 : manHasBall ? 5.6 : 4.8
@@ -987,7 +1134,6 @@ export default function GameLoop() {
     steerToward(p, p.reactTarget, maxSp, 7.5, dt, 0.12)
 
     // Defensive shuffle stance when locked onto the man
-    const dMan = p.pos.distanceTo(man.pos)
     if (p.grounded && dMan < 2.6 && p.speed < 3.4 && p.stunT <= 0) {
       p.anim = 'shuffle'
     }
@@ -996,9 +1142,34 @@ export default function GameLoop() {
       p.facing = Math.atan2(man.pos.x - p.pos.x, man.pos.z - p.pos.z)
     }
 
-    // Contest / block: jump when the man rises up for a shot
+    // Contest / block: jump when the man rises up for a shot.
+    // A defender arriving at full sprint is off-balance: he jumps later,
+    // lower, and sometimes can't get up at all.
     if (man.anim === 'shoot' && p.grounded && dMan < 2.2 && man.animT < 0.25) {
-      p.vy = 7.2
+      const offBalance = Math.min(p.speed / 6.5, 1)
+      if (Math.random() < 0.55 - offBalance * 0.35) {
+        p.vy = 7.4 - offBalance * 2.6
+        p.grounded = false
+        p.anim = 'block'
+        p.animT = 0
+      } else if (offBalance > 0.6 && Math.random() < 0.3) {
+        // Flew past on the closeout
+        p.stumbleT = 0.5
+        p.anim = 'stumble'
+        p.animT = 0
+      }
+    }
+
+    // Dunk challenge: meet the dunker at the rim (dunks are blockable)
+    if (
+      man.dunking &&
+      man.dunkT < 0.3 &&
+      p.grounded &&
+      dMan < 2.4 &&
+      p.speed < 4.5 &&
+      Math.random() < 0.5
+    ) {
+      p.vy = 7.6
       p.grounded = false
       p.anim = 'block'
       p.animT = 0

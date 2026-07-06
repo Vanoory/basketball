@@ -44,33 +44,72 @@ export default function PlayerMesh({ id }: Props) {
     let bodyLean = 0
     let bodyBob = 0
 
+    const hasBall = G.ball.state === 'held' && G.ball.holder === id
+
     switch (pl.anim) {
       case 'run': {
         lArmX = Math.sin(runPhase) * 0.85 * runAmt
-        rArmX = -Math.sin(runPhase) * 0.85 * runAmt
         lLegX = -Math.sin(runPhase) * 0.95 * runAmt
         rLegX = Math.sin(runPhase) * 0.95 * runAmt
         bodyLean = 0.14 * runAmt
         bodyBob = Math.abs(Math.sin(runPhase)) * 0.05 * runAmt
+        if (hasBall) {
+          // Dribbling hand pumps in sync with the actual ball bounce
+          const rate = 9 + pl.speed * 0.9
+          const pump = Math.abs(Math.sin(t * rate))
+          rArmX = -0.35 - pump * 0.55
+          rArmZ = -0.35
+          lArmX *= 0.6 // off-arm shields
+          lArmZ = 0.35
+        } else {
+          rArmX = -Math.sin(runPhase) * 0.85 * runAmt
+        }
         break
       }
       case 'shoot': {
-        // Two-hand gather, then one-arm follow-through at release
+        // Crouch gather -> rise with ball overhead -> wrist-flick follow-through
+        const crouch = Math.max(0, 1 - pl.animT / 0.1) // brief dip at the start
         const k = Math.min(pl.animT / 0.25, 1)
         const follow = Math.max(0, Math.min((pl.animT - 0.32) / 0.15, 1))
-        lArmX = -2.6 * k + follow * 1.2
-        rArmX = -2.6 * k - follow * 0.4
-        rArmZ = follow * 0.15
-        lLegX = -0.3
-        rLegX = 0.35
+        lArmX = -2.6 * k + follow * 1.6
+        rArmX = -2.7 * k - follow * 0.35
+        rArmZ = follow * 0.28
+        lArmZ = follow * 0.1
+        lLegX = -0.35 - crouch * 0.3
+        rLegX = 0.4 + crouch * 0.3
+        bodyBob = -crouch * 0.16
+        bodyLean = crouch * 0.2 - follow * 0.05
         break
       }
       case 'dunk': {
-        lArmX = -1.2
-        rArmX = -2.95
-        lLegX = -0.75
-        rLegX = 0.55
-        bodyLean = 0.3
+        // Phases driven by dunk progress: windup -> cock back -> slam -> hang
+        const dp = Math.min(pl.dunkT / 0.72, 1)
+        if (dp < 0.35) {
+          // Rising: two-hand windup, knees tucked
+          const k = dp / 0.35
+          lArmX = -1.4 * k
+          rArmX = -1.9 * k
+          lLegX = -0.9 * k
+          rLegX = -0.7 * k
+          bodyLean = 0.15 * k
+        } else if (dp < 0.6) {
+          // Cocked back over the head, body arched
+          const k = (dp - 0.35) / 0.25
+          lArmX = -1.4 - k * 0.6
+          rArmX = -1.9 - k * 1.3
+          rArmZ = -0.25 * k
+          lLegX = -0.9
+          rLegX = -0.7 + k * 0.3
+          bodyLean = 0.15 - k * 0.35 // arch backward
+        } else {
+          // SLAM: arm whips down through the rim, legs kick back
+          const k = Math.min((dp - 0.6) / 0.2, 1)
+          lArmX = -2.0 + k * 1.2
+          rArmX = -3.2 + k * 2.4
+          lLegX = -0.9 + k * 1.2
+          rLegX = -0.4 + k * 0.8
+          bodyLean = -0.2 + k * 0.55 // snap forward
+        }
         break
       }
       case 'jump': {
@@ -152,8 +191,20 @@ export default function PlayerMesh({ id }: Props) {
       }
       default: {
         // idle: subtle sway + ready arms
-        lArmX = Math.sin(t * 2 + id) * 0.06 + 0.25
-        rArmX = Math.sin(t * 2 + id + 1) * 0.06 + 0.25
+        if (hasBall) {
+          // Standing dribble: hand follows the ball, slight protect stance
+          const pump = Math.abs(Math.sin(t * 9))
+          rArmX = -0.3 - pump * 0.5
+          rArmZ = -0.3
+          lArmX = 0.35
+          lArmZ = 0.45
+          lLegX = 0.1
+          rLegX = -0.1
+          bodyLean = 0.12
+        } else {
+          lArmX = Math.sin(t * 2 + id) * 0.06 + 0.25
+          rArmX = Math.sin(t * 2 + id + 1) * 0.06 + 0.25
+        }
         bodyBob = Math.sin(t * 2.4 + id) * 0.015
       }
     }
@@ -169,6 +220,12 @@ export default function PlayerMesh({ id }: Props) {
     // Crossover side lean (from dribble moves) + stagger wobble
     tilt.current.rotation.z =
       pl.crossLean + (pl.stumbleT > 0 ? Math.sin(t * 13) * 0.16 : 0)
+
+    // Squash & stretch: stretch going up, slight squash coming down
+    const stretch = pl.grounded
+      ? 1
+      : 1 + THREE.MathUtils.clamp(pl.vy * 0.018, -0.06, 0.1)
+    tilt.current.scale.set(2 - stretch, stretch, 2 - stretch)
 
     if (lArm.current) {
       lArm.current.rotation.x = lArmX
