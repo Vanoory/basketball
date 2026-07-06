@@ -464,6 +464,10 @@ export default function GameLoop() {
 
     // Offense with ball: dunk or jump shot
     if (b.state === 'held' && b.holder === me.id) {
+      if (G.mustClear && !isThree(me.pos)) {
+        setMessage('CLEAR IT PAST THE ARC!', 1.0)
+        return
+      }
       const d = distToRim(me.pos)
       if (d < 2.7) {
         startDunk(me)
@@ -703,6 +707,8 @@ export default function GameLoop() {
       let d1 = 999
       for (const p of G.players) {
         if (p.dunking || p.stunT > 0 || p.anim === 'shoot') continue
+        // After a made basket only the inbounding team hustles for the ball
+        if (G.inboundTeam >= 0 && p.team !== G.inboundTeam) continue
         const d = p.pos.distanceTo(b.pos)
         if (p.team === 0 && d < d0) {
           d0 = d
@@ -754,8 +760,33 @@ export default function GameLoop() {
     const d = distToRim(p.pos)
     const defDist = nearestOpponentDist(p)
 
+    // Clear the ball first: dribble it out beyond the arc, or hit a
+    // teammate already spotted up outside for the quick three look.
+    if (G.mustClear && !isThree(p.pos)) {
+      let outMate: PlayerData | null = null
+      let bestOpen = 0
+      for (const m of G.players) {
+        if (m.team !== p.team || m.id === p.id || m.stunT > 0) continue
+        if (!isThree(m.pos)) continue
+        const o = opennessOf(m)
+        if (o > bestOpen) {
+          bestOpen = o
+          outMate = m
+        }
+      }
+      if (outMate && bestOpen > 1.6 && Math.random() < 0.02) {
+        tryPass(p, outMate.id)
+        return
+      }
+      // Dribble straight out past the arc
+      V2.set(p.pos.x * 0.55, 0, 6.2)
+      steerToward(p, V2.setY(0), 6.2, 9, dt, 0.4)
+      if (p.grounded) p.anim = 'run'
+      return
+    }
+
     // Attack the rim
-    if (d < 2.5) {
+    if (d < 2.5 && !G.mustClear) {
       startDunk(p)
       return
     }
@@ -1105,6 +1136,8 @@ export default function GameLoop() {
       if (G.phase === 'play' && b.pos.y < 1.5) {
         for (const p of G.players) {
           if (p.dunking || p.anim === 'shoot' || p.stunT > 0) continue
+          // After a made basket only the inbounding team takes the ball
+          if (G.inboundTeam >= 0 && p.team !== G.inboundTeam) continue
           if (
             p.pos.clone().setY(0).distanceTo(V.set(b.pos.x, 0, b.pos.z)) < 0.7
           ) {
@@ -1139,19 +1172,33 @@ export default function GameLoop() {
 
   function updateCamera(dt: number) {
     const b = G.ball
-    const fx = THREE.MathUtils.clamp(b.pos.x, -6, 6)
-    const fz = THREE.MathUtils.clamp(b.pos.z, -10, 4.5)
 
-    V.set(fx * 0.5, 7.4, fz * 0.42 + 11)
-    V2.set(fx * 0.65, 1.1, fz * 0.55 - 3.2)
+    // Lead the action: anticipate where the ball is going
+    const leadX = THREE.MathUtils.clamp(b.vel.x * 0.28, -2.2, 2.2)
+    const leadZ = THREE.MathUtils.clamp(b.vel.z * 0.22, -1.8, 1.8)
+    const fx = THREE.MathUtils.clamp(b.pos.x + leadX, -6.5, 6.5)
+    const fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, 4.5)
+
+    // Action intensity: 0 out top, 1 at the rim -> camera pushes in and drops
+    const rimT = THREE.MathUtils.clamp(1 - distToRim(b.pos) / 12, 0, 1)
+    // Airborne ball (shot/dunk) pulls the camera up slightly for the arc
+    const airT = THREE.MathUtils.clamp((b.pos.y - 1.6) / 3.5, 0, 1)
+
+    const camH = 7.6 - rimT * 1.7 + airT * 0.9
+    const camDist = 11.4 - rimT * 2.6
+    V.set(fx * (0.5 + rimT * 0.18), camH, fz * 0.42 + camDist)
+    V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
 
     if (!camInit.current) {
       G.camPos.copy(V)
       G.camLook.copy(V2)
       camInit.current = true
     } else {
-      G.camPos.lerp(V, 1 - Math.exp(-3.5 * dt))
-      G.camLook.lerp(V2, 1 - Math.exp(-3.5 * dt))
+      // Faster panning when the ball moves fast, smooth when settled
+      const ballSpeed = Math.hypot(b.vel.x, b.vel.z)
+      const k = 3.2 + Math.min(ballSpeed * 0.35, 3.4) + rimT * 1.2
+      G.camPos.lerp(V, 1 - Math.exp(-k * dt))
+      G.camLook.lerp(V2, 1 - Math.exp(-(k + 0.8) * dt))
     }
     camera.position.copy(G.camPos)
     if (G.camShake > 0) {
@@ -1159,6 +1206,14 @@ export default function GameLoop() {
       camera.position.y += (Math.random() - 0.5) * G.camShake * 0.3
     }
     camera.lookAt(G.camLook)
+
+    // Subtle zoom punch-in near the rim
+    const cam = camera as THREE.PerspectiveCamera
+    const targetFov = 50 - rimT * 5
+    if (Math.abs(cam.fov - targetFov) > 0.05) {
+      cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-4 * dt))
+      cam.updateProjectionMatrix()
+    }
   }
 
   function syncHud() {
