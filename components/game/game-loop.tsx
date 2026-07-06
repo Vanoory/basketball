@@ -634,13 +634,25 @@ export default function GameLoop() {
     if (me.stunT > 0) return
     const b = G.ball
     if (G.possession === me.team) return
-    stealCooldown.current = 0.9
+    stealCooldown.current = 0.75
     me.anim = 'steal'
     me.animT = 0
+    // Poke at a live pass: deflect it if it's flying close by
+    if (b.state === 'pass' && b.pos.distanceTo(me.pos) < 1.6 && Math.random() < 0.5) {
+      b.state = 'loose'
+      b.holder = -1
+      b.vel.set((Math.random() - 0.5) * 4, 2.2, (Math.random() - 0.5) * 4)
+      setMessage('DEFLECTED!', 1.3)
+      return
+    }
     if (b.state === 'held' && b.holder >= 0) {
       const h = G.players[b.holder]
-      if (h.pos.distanceTo(me.pos) < 1.5 && !h.dunking) {
-        if (Math.random() < 0.3) {
+      if (h.pos.distanceTo(me.pos) < 1.6 && !h.dunking) {
+        // Poking from behind / the side is more effective than head-on
+        const toMe = V2.copy(me.pos).sub(h.pos).setY(0).normalize()
+        const fwd = V3.set(Math.sin(h.facing), 0, Math.cos(h.facing))
+        const behind = toMe.dot(fwd) < 0.2
+        if (Math.random() < (behind ? 0.42 : 0.3)) {
           b.state = 'loose'
           b.holder = -1
           b.pos.set(h.pos.x, 1, h.pos.z)
@@ -765,6 +777,7 @@ export default function GameLoop() {
     if (k.has('KeyD') || k.has('ArrowRight')) mx += 1
 
     const hasBall = b.state === 'held' && b.holder === me.id
+    const defending = G.possession !== me.team
 
     if (!shooting && (mx !== 0 || mz !== 0)) {
       const len = Math.hypot(mx, mz)
@@ -773,9 +786,20 @@ export default function GameLoop() {
       // Sharp cut with the ball near a defender = ankle-break chance
       if (hasBall) tryAnkleBreak(me, mx, mz)
       const sprint = k.has('ShiftLeft') || k.has('ShiftRight')
-      const speed = sprint ? (hasBall ? 6.4 : 7) : 4.6
-      applyMove(me, mx, mz, speed, 12, dt)
+      // Defense is snappier: higher accel + a small speed edge so you can
+      // actually stay in front of the AI handler.
+      const speed = sprint ? (hasBall ? 6.4 : defending ? 7.4 : 7) : defending ? 5.2 : 4.6
+      applyMove(me, mx, mz, speed, defending ? 15 : 12, dt)
       if (me.grounded) me.anim = 'run'
+      // While defending, keep facing the ball even when strafing so blocks
+      // and steals feel aimed correctly.
+      if (defending && b.holder >= 0 && me.grounded) {
+        const h = G.players[b.holder]
+        if (h.pos.distanceTo(me.pos) < 4.5) {
+          me.facing = Math.atan2(h.pos.x - me.pos.x, h.pos.z - me.pos.z)
+          if (me.speed < 3.6 && me.anim === 'run') me.anim = 'shuffle'
+        }
+      }
     } else if (!shooting) {
       applyMove(me, 0, 0, 0, 16, dt)
       if (me.grounded && me.anim === 'run') me.anim = 'idle'
@@ -784,6 +808,13 @@ export default function GameLoop() {
           RIM_GROUND.x - me.pos.x,
           RIM_GROUND.z - me.pos.z,
         )
+      } else if (defending && b.holder >= 0) {
+        // Standing on defense: square up to the ball handler automatically
+        const h = G.players[b.holder]
+        if (h.pos.distanceTo(me.pos) < 6) {
+          me.facing = Math.atan2(h.pos.x - me.pos.x, h.pos.z - me.pos.z)
+          if (me.grounded && h.pos.distanceTo(me.pos) < 2.8) me.anim = 'shuffle'
+        }
       }
     }
   }
@@ -1343,21 +1374,48 @@ export default function GameLoop() {
 
   function updateCamera(dt: number) {
     const b = G.ball
+    const me = G.players[G.controlled]
+    const defending = G.phase === 'play' && G.possession !== me.team
 
     // Lead the action: anticipate where the ball is going
     const leadX = THREE.MathUtils.clamp(b.vel.x * 0.28, -2.2, 2.2)
     const leadZ = THREE.MathUtils.clamp(b.vel.z * 0.22, -1.8, 1.8)
-    const fx = THREE.MathUtils.clamp(b.pos.x + leadX, -6.5, 6.5)
-    const fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, 4.5)
+    let fx = THREE.MathUtils.clamp(b.pos.x + leadX, -6.5, 6.5)
+    let fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, 4.5)
+
+    // DEFENSE: frame the midpoint between MY defender and the ball so both
+    // are always on screen - much easier to position yourself.
+    if (defending) {
+      fx = THREE.MathUtils.clamp(
+        me.pos.x * 0.45 + b.pos.x * 0.55 + leadX * 0.4,
+        -6.5,
+        6.5,
+      )
+      fz = THREE.MathUtils.clamp(
+        me.pos.z * 0.45 + b.pos.z * 0.55 + leadZ * 0.4,
+        -10,
+        4.5,
+      )
+    }
 
     // Action intensity: 0 out top, 1 at the rim -> camera pushes in and drops
     const rimT = THREE.MathUtils.clamp(1 - distToRim(b.pos) / 12, 0, 1)
     // Airborne ball (shot/dunk) pulls the camera up slightly for the arc
     const airT = THREE.MathUtils.clamp((b.pos.y - 1.6) / 3.5, 0, 1)
+    // Fast ball = wider, more cinematic framing
+    const ballSpeed = Math.hypot(b.vel.x, b.vel.z)
+    const speedT = THREE.MathUtils.clamp(ballSpeed / 9, 0, 1)
 
-    const camH = 7.6 - rimT * 1.7 + airT * 0.9
-    const camDist = 11.4 - rimT * 2.6
-    V.set(fx * (0.5 + rimT * 0.18), camH, fz * 0.42 + camDist)
+    // On defense stay higher & further back for full court vision - the
+    // camera never dives behind the backboard.
+    const camH = defending
+      ? 9.2 - rimT * 0.7 + airT * 0.7
+      : 7.6 - rimT * 1.7 + airT * 0.9 + speedT * 0.5
+    const camDist = defending ? 12.8 - rimT * 1.1 : 11.4 - rimT * 2.6
+    // Subtle lateral orbit follows the ball side for a dynamic angle
+    const orbit = defending ? 0 : THREE.MathUtils.clamp(fx * 0.1, -0.8, 0.8)
+
+    V.set(fx * (0.5 + rimT * 0.18) + orbit, camH, fz * 0.42 + camDist)
     V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
 
     if (!camInit.current) {
@@ -1366,7 +1424,6 @@ export default function GameLoop() {
       camInit.current = true
     } else {
       // Faster panning when the ball moves fast, smooth when settled
-      const ballSpeed = Math.hypot(b.vel.x, b.vel.z)
       const k = 3.2 + Math.min(ballSpeed * 0.35, 3.4) + rimT * 1.2
       G.camPos.lerp(V, 1 - Math.exp(-k * dt))
       G.camLook.lerp(V2, 1 - Math.exp(-(k + 0.8) * dt))
@@ -1378,9 +1435,10 @@ export default function GameLoop() {
     }
     camera.lookAt(G.camLook)
 
-    // Subtle zoom punch-in near the rim
+    // Zoom punch-in near the rim, slight wide-angle on fast breaks;
+    // defense keeps a steady wider lens.
     const cam = camera as THREE.PerspectiveCamera
-    const targetFov = 50 - rimT * 5
+    const targetFov = defending ? 53 : 50 - rimT * 6 + speedT * 2
     if (Math.abs(cam.fov - targetFov) > 0.05) {
       cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-4 * dt))
       cam.updateProjectionMatrix()

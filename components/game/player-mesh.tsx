@@ -23,11 +23,19 @@ export default function PlayerMesh({ id }: Props) {
   const p = G.players[id]
   const c = p.colors
 
-  useFrame((state) => {
+  useFrame((state, dt) => {
     if (!root.current || !tilt.current) return
     const pl = G.players[id]
     root.current.position.copy(pl.pos)
-    root.current.rotation.y = pl.facing
+    // Smoothly rotate toward the facing direction (shortest arc) instead of
+    // snapping - makes cuts and crossovers read much better.
+    {
+      const cur = root.current.rotation.y
+      let diff = pl.facing - cur
+      while (diff > Math.PI) diff -= Math.PI * 2
+      while (diff < -Math.PI) diff += Math.PI * 2
+      root.current.rotation.y = cur + diff * Math.min(1, 18 * dt)
+    }
 
     const t = state.clock.elapsedTime
     const runPhase = t * 11

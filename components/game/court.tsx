@@ -125,25 +125,48 @@ function Hoop() {
         <meshLambertMaterial color="#475569" />
       </mesh>
 
-      {/* Backboard */}
-      <mesh position={[0, 3.6, -10.05]} castShadow>
+      {/* Backboard - transparent glass so it never blocks the view */}
+      <mesh position={[0, 3.6, -10.05]}>
         <boxGeometry args={[2.4, 1.5, 0.08]} />
-        <meshLambertMaterial color="#e2e8f0" />
+        <meshLambertMaterial
+          color="#bfdbfe"
+          transparent
+          opacity={0.22}
+          depthWrite={false}
+        />
       </mesh>
-      {/* Backboard border */}
-      <mesh position={[0, 3.6, -10.0]}>
-        <boxGeometry args={[2.42, 1.52, 0.02]} />
-        <meshLambertMaterial color="#94a3b8" />
-      </mesh>
-      {/* Backboard inner square */}
-      <mesh position={[0, 3.35, -9.99]}>
-        <boxGeometry args={[0.8, 0.6, 0.02]} />
-        <meshLambertMaterial color="#ef4444" />
-      </mesh>
-      <mesh position={[0, 3.35, -9.98]}>
-        <boxGeometry args={[0.64, 0.44, 0.02]} />
-        <meshLambertMaterial color="#e2e8f0" />
-      </mesh>
+      {/* Backboard frame (thin opaque edges) */}
+      {[
+        [0, 4.33, 2.44, 0.07],
+        [0, 2.87, 2.44, 0.07],
+      ].map(([x, y, w, h], i) => (
+        <mesh key={`bbh${i}`} position={[x, y, -10.05]}>
+          <boxGeometry args={[w, h, 0.1]} />
+          <meshLambertMaterial color="#e2e8f0" />
+        </mesh>
+      ))}
+      {[-1.185, 1.185].map((x, i) => (
+        <mesh key={`bbv${i}`} position={[x, 3.6, -10.05]}>
+          <boxGeometry args={[0.07, 1.5, 0.1]} />
+          <meshLambertMaterial color="#e2e8f0" />
+        </mesh>
+      ))}
+      {/* Shooter's square outline */}
+      {[
+        [0, 3.63, 0.82, 0.05],
+        [0, 3.07, 0.82, 0.05],
+      ].map(([x, y, w, h], i) => (
+        <mesh key={`sqh${i}`} position={[x, y, -9.99]}>
+          <boxGeometry args={[w, h, 0.02]} />
+          <meshLambertMaterial color="#ef4444" />
+        </mesh>
+      ))}
+      {[-0.385, 0.385].map((x, i) => (
+        <mesh key={`sqv${i}`} position={[x, 3.35, -9.99]}>
+          <boxGeometry args={[0.05, 0.6, 0.02]} />
+          <meshLambertMaterial color="#ef4444" />
+        </mesh>
+      ))}
 
       {/* Rim */}
       <mesh position={[RIM.x, RIM.y, RIM.z]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -309,6 +332,69 @@ function Floodlight({ x, z }: { x: number; z: number }) {
   )
 }
 
+function Tree({ x, z, s = 1 }: { x: number; z: number; s?: number }) {
+  return (
+    <group position={[x, 0, z]} scale={s}>
+      <mesh position={[0, 1, 0]}>
+        <boxGeometry args={[0.35, 2, 0.35]} />
+        <meshLambertMaterial color="#5b4633" />
+      </mesh>
+      <mesh position={[0, 2.5, 0]}>
+        <boxGeometry args={[1.9, 1.6, 1.9]} />
+        <meshLambertMaterial color="#1f4a2e" />
+      </mesh>
+      <mesh position={[0.3, 3.5, 0.2]}>
+        <boxGeometry args={[1.2, 1, 1.2]} />
+        <meshLambertMaterial color="#276038" />
+      </mesh>
+    </group>
+  )
+}
+
+function Bench({ x, z, rot = 0 }: { x: number; z: number; rot?: number }) {
+  return (
+    <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+      <mesh position={[0, 0.45, 0]}>
+        <boxGeometry args={[2.2, 0.1, 0.55]} />
+        <meshLambertMaterial color="#7c5c3e" />
+      </mesh>
+      <mesh position={[0, 0.85, -0.25]}>
+        <boxGeometry args={[2.2, 0.5, 0.08]} />
+        <meshLambertMaterial color="#7c5c3e" />
+      </mesh>
+      {[-0.9, 0.9].map((lx, i) => (
+        <mesh key={i} position={[lx, 0.22, 0]}>
+          <boxGeometry args={[0.12, 0.45, 0.5]} />
+          <meshLambertMaterial color="#334155" />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function Stars() {
+  const positions = useMemo(() => {
+    const arr = new Float32Array(140 * 3)
+    for (let i = 0; i < 140; i++) {
+      arr[i * 3] = (Math.random() - 0.5) * 110
+      arr[i * 3 + 1] = 12 + Math.random() * 30
+      arr[i * 3 + 2] = -30 - Math.random() * 25
+    }
+    return arr
+  }, [])
+  return (
+    <points>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+        />
+      </bufferGeometry>
+      <pointsMaterial color="#e2e8f0" size={0.22} sizeAttenuation />
+    </points>
+  )
+}
+
 function Environment() {
   return (
     <group>
@@ -333,8 +419,13 @@ function Environment() {
           side={THREE.DoubleSide}
         />
       </mesh>
+      {/* Fence top rail */}
+      <mesh position={[0, 3.25, 9]}>
+        <boxGeometry args={[36, 0.12, 0.12]} />
+        <meshLambertMaterial color="#64748b" />
+      </mesh>
 
-      {/* Night-city skyline */}
+      {/* Night-city skyline (two depth layers) */}
       <Building x={-16} z={-24} w={7} h={14} color="#1e293b" />
       <Building x={-7} z={-26} w={6} h={19} color="#273449" />
       <Building x={2} z={-25} w={8} h={12} color="#1e293b" />
@@ -342,18 +433,57 @@ function Environment() {
       <Building x={19} z={-24} w={7} h={10} color="#1e293b" />
       <Building x={-24} z={-20} w={6} h={9} color="#273449" />
       <Building x={25} z={-20} w={6} h={12} color="#273449" />
+      {/* Far silhouette layer */}
+      <Building x={-30} z={-32} w={9} h={22} color="#16233a" />
+      <Building x={-2} z={-34} w={10} h={25} color="#141f33" />
+      <Building x={16} z={-33} w={8} h={20} color="#16233a" />
+      <Building x={32} z={-31} w={9} h={16} color="#141f33" />
+      {/* Side-street buildings */}
+      <Building x={-30} z={-4} w={8} h={11} color="#1c2940" />
+      <Building x={30} z={-4} w={8} h={13} color="#1c2940" />
 
-      {/* Moon */}
-      <mesh position={[14, 22, -40]}>
-        <boxGeometry args={[3, 3, 0.2]} />
-        <meshBasicMaterial color="#fef9c3" />
-      </mesh>
+      {/* Rooftop antenna blinkers */}
+      {[
+        [-7, 19.4, -26],
+        [11, 17.4, -26],
+        [-2, 25.4, -34],
+      ].map(([x, y, z], i) => (
+        <group key={`ant${i}`} position={[x, y, z]}>
+          <mesh position={[0, 0.6, 0]}>
+            <boxGeometry args={[0.08, 1.2, 0.08]} />
+            <meshLambertMaterial color="#475569" />
+          </mesh>
+          <mesh position={[0, 1.25, 0]}>
+            <boxGeometry args={[0.2, 0.2, 0.2]} />
+            <meshBasicMaterial color="#f87171" />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Glowing moon */}
+      <group position={[14, 22, -40]}>
+        <mesh>
+          <boxGeometry args={[3, 3, 0.2]} />
+          <meshBasicMaterial color="#fef9c3" />
+        </mesh>
+        <mesh position={[0, 0, 0.05]}>
+          <boxGeometry args={[4.4, 4.4, 0.1]} />
+          <meshBasicMaterial color="#fef9c3" transparent opacity={0.14} />
+        </mesh>
+        <mesh position={[-0.6, 0.5, 0.12]}>
+          <boxGeometry args={[0.7, 0.7, 0.05]} />
+          <meshBasicMaterial color="#fde68a" />
+        </mesh>
+      </group>
+
+      <Stars />
 
       {/* Pixel clouds */}
       {[
         [-18, 17, -35, 5],
         [6, 20, -38, 7],
         [22, 15, -34, 4],
+        [-30, 21, -36, 6],
       ].map(([x, y, z, w], i) => (
         <group key={`cl${i}`} position={[x, y, z]}>
           <mesh>
@@ -366,6 +496,18 @@ function Environment() {
           </mesh>
         </group>
       ))}
+
+      {/* Park trees around the court */}
+      <Tree x={-15} z={5} s={1.3} />
+      <Tree x={-17} z={-9} s={1.1} />
+      <Tree x={16} z={4} s={1.2} />
+      <Tree x={17} z={-10} s={1.4} />
+      <Tree x={-20} z={0} s={0.9} />
+      <Tree x={21} z={-2} s={1} />
+
+      {/* Benches along the sideline */}
+      <Bench x={-10.6} z={2} rot={Math.PI / 2} />
+      <Bench x={10.6} z={-8.5} rot={-Math.PI / 2} />
 
       {/* Floodlights on the corners */}
       <Floodlight x={-11} z={6} />
