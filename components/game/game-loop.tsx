@@ -1531,14 +1531,19 @@ export default function GameLoop() {
       (wantDef - defCamBlend.current) * (1 - Math.exp(-2.2 * dt))
     const db = defCamBlend.current
     if (db > 0.01) {
-      // Behind and above the backboard, offset slightly toward the ball side
+      // High behind the hoop, looking over the top of the backboard so
+      // the board never blocks the view of the action near the rim
       V3.set(
         THREE.MathUtils.clamp(fx * 0.45, -3.2, 3.2),
-        6.4 - rimT * 0.6,
-        RIM_GROUND.z - 5.6,
+        8.8 - rimT * 0.5,
+        RIM_GROUND.z - 7.2,
       )
       V.lerp(V3, db)
-      V3.set(fx * 0.8, 0.9 + airT * 0.8, THREE.MathUtils.clamp(fz, -8, 4) * 0.85)
+      V3.set(
+        fx * 0.8,
+        0.5 + airT * 0.8,
+        THREE.MathUtils.clamp(fz, -6, 4) * 0.9,
+      )
       V2.lerp(V3, db)
     }
 
