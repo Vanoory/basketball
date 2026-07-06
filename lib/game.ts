@@ -27,6 +27,20 @@ export type PlayerAnim =
   | 'celebrate'
   | 'steal'
   | 'stumble'
+  | 'catch'
+
+// Dunk styles: 0 two-hand jam, 1 tomahawk, 2 windmill, 3 360 slam, 4 reverse
+export const DUNK_DUR = [0.72, 0.78, 0.92, 0.98, 0.85]
+export const DUNK_NAMES = [
+  'TWO-HAND JAM!',
+  'TOMAHAWK!',
+  'WINDMILL!',
+  '360 SLAM!',
+  'REVERSE JAM!',
+]
+
+// Shot styles: 0 jumper, 1 fadeaway, 2 floater
+export type ShotStyle = 0 | 1 | 2
 
 export interface PlayerData {
   id: number
@@ -45,6 +59,9 @@ export interface PlayerData {
   dunkFrom: THREE.Vector3
   dunkT: number
   dunking: boolean
+  dunkStyle: number // which dunk animation is playing
+  dunkFacing: number // facing captured at takeoff (for 360 spins)
+  shotStyle: ShotStyle // 0 jumper, 1 fadeaway, 2 floater
   stunT: number // > 0 => knocked down (ankle break)
   stumbleT: number // > 0 => staggered but on his feet (light cross)
   ankleCd: number // cooldown so the same defender is not dropped every frame
@@ -72,6 +89,9 @@ export interface BallData {
   shooterId: number
   scored: boolean
   spin: number
+  passDist: number // total distance of the current pass (for the arc)
+  passArc: number // peak height of the pass arc
+  passFromY: number // launch height of the pass
 }
 
 export interface GameData {
@@ -126,6 +146,9 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     dunkFrom: new THREE.Vector3(),
     dunkT: 0,
     dunking: false,
+    dunkStyle: 0,
+    dunkFacing: 0,
+    shotStyle: 0,
     stunT: 0,
     stumbleT: 0,
     ankleCd: 0,
@@ -163,6 +186,9 @@ export function createGame(): GameData {
       shooterId: -1,
       scored: false,
       spin: 0,
+      passDist: 0,
+      passArc: 0,
+      passFromY: 1.3,
     },
     possession: 0,
     scores: [0, 0],

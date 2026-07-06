@@ -8,6 +8,22 @@ import { RIM } from '@/lib/game'
 const LINE_COLOR = '#f8fafc'
 const LINE_Y = 0.02
 
+// Fixed plank tones (seeded variation, no flicker between renders)
+const PLANK_TONES = [
+  '#cd8a45',
+  '#bd7a3c',
+  '#c98442',
+  '#b97638',
+  '#d18e49',
+  '#bd7a3c',
+  '#c68040',
+  '#bb783a',
+  '#cf8c47',
+  '#b8743a',
+  '#ca8643',
+  '#bf7c3e',
+]
+
 function Line({
   x = 0,
   z = 0,
@@ -46,8 +62,8 @@ export default function Court() {
         <meshLambertMaterial color="#14532d" />
       </mesh>
 
-      {/* Wooden court - alternating plank strips for a pixel feel */}
-      {Array.from({ length: 12 }).map((_, i) => (
+      {/* Wooden court - plank strips with subtle tone variation */}
+      {PLANK_TONES.map((tone, i) => (
         <mesh
           key={i}
           position={[-8.25 + i * 1.5 + 0.75, 0, -3.4]}
@@ -55,7 +71,18 @@ export default function Court() {
           receiveShadow
         >
           <planeGeometry args={[1.5, 16.4]} />
-          <meshLambertMaterial color={i % 2 === 0 ? '#cd8a45' : '#bd7a3c'} />
+          <meshLambertMaterial color={tone} />
+        </mesh>
+      ))}
+      {/* Plank seams (horizontal breaks for a real parquet feel) */}
+      {[-9, -5.5, -2, 1.5].map((z, i) => (
+        <mesh
+          key={`seam${i}`}
+          position={[0, 0.005, z]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <planeGeometry args={[16.5, 0.04]} />
+          <meshBasicMaterial color="#a4692f" />
         </mesh>
       ))}
 
@@ -73,6 +100,19 @@ export default function Court() {
       <mesh position={[0, 0.011, 4.5]} rotation={[-Math.PI / 2, 0, 0]}>
         <circleGeometry args={[1.7, 32, 0, Math.PI]} />
         <meshLambertMaterial color="#b91c1c" />
+      </mesh>
+      {/* Pixel basketball logo inside the center circle */}
+      <mesh position={[0, 0.013, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.75, 10]} />
+        <meshBasicMaterial color="#f97316" />
+      </mesh>
+      <mesh position={[0, 0.014, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[1.45, 0.07]} />
+        <meshBasicMaterial color="#7c2d12" />
+      </mesh>
+      <mesh position={[0, 0.014, 3.7]} rotation={[-Math.PI / 2, 0, Math.PI / 2]}>
+        <planeGeometry args={[1.45, 0.07]} />
+        <meshBasicMaterial color="#7c2d12" />
       </mesh>
 
       {/* Court boundary lines */}
@@ -150,11 +190,30 @@ function Hoop() {
         <torusGeometry args={[0.45, 0.05, 8, 16]} />
         <meshLambertMaterial color="#f97316" emissive="#7c2d12" emissiveIntensity={0.4} />
       </mesh>
+      {/* Rim mounting bracket */}
+      <mesh position={[RIM.x, RIM.y - 0.05, RIM.z - 0.52]}>
+        <boxGeometry args={[0.3, 0.12, 0.2]} />
+        <meshLambertMaterial color="#ea580c" />
+      </mesh>
 
-      {/* Net */}
+      {/* Net - double layer for density */}
       <mesh position={[RIM.x, RIM.y - 0.25, RIM.z]}>
         <cylinderGeometry args={[0.44, 0.28, 0.5, 8, 3, true]} />
         <meshBasicMaterial color="#f8fafc" wireframe transparent opacity={0.8} />
+      </mesh>
+      <mesh position={[RIM.x, RIM.y - 0.25, RIM.z]} rotation={[0, Math.PI / 8, 0]}>
+        <cylinderGeometry args={[0.43, 0.27, 0.48, 8, 2, true]} />
+        <meshBasicMaterial color="#e2e8f0" wireframe transparent opacity={0.5} />
+      </mesh>
+
+      {/* Shot-clock box on top of the backboard */}
+      <mesh position={[0, 4.5, -10.05]}>
+        <boxGeometry args={[0.6, 0.35, 0.12]} />
+        <meshLambertMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[0, 4.5, -9.98]}>
+        <planeGeometry args={[0.4, 0.2]} />
+        <meshBasicMaterial color="#f97316" />
       </mesh>
     </group>
   )
@@ -290,6 +349,36 @@ function Building({
   )
 }
 
+function Stars() {
+  const stars = useMemo(() => {
+    const arr: { x: number; y: number; z: number; s: number }[] = []
+    let seed = 7
+    const rnd = () => {
+      seed = (seed * 16807) % 2147483647
+      return seed / 2147483647
+    }
+    for (let i = 0; i < 40; i++) {
+      arr.push({
+        x: (rnd() - 0.5) * 90,
+        y: 12 + rnd() * 22,
+        z: -36 - rnd() * 8,
+        s: 0.12 + rnd() * 0.2,
+      })
+    }
+    return arr
+  }, [])
+  return (
+    <group>
+      {stars.map((st, i) => (
+        <mesh key={i} position={[st.x, st.y, st.z]}>
+          <boxGeometry args={[st.s, st.s, 0.05]} />
+          <meshBasicMaterial color={i % 5 === 0 ? '#bfdbfe' : '#e2e8f0'} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 function Floodlight({ x, z }: { x: number; z: number }) {
   return (
     <group position={[x, 0, z]}>
@@ -348,6 +437,75 @@ function Environment() {
         <boxGeometry args={[3, 3, 0.2]} />
         <meshBasicMaterial color="#fef9c3" />
       </mesh>
+
+      {/* Pixel stars */}
+      <Stars />
+
+      {/* Sideline benches with pixel water coolers */}
+      {[-1, 1].map((s) => (
+        <group key={`bench${s}`} position={[s * 6, 0, 6.6]}>
+          <mesh position={[0, 0.35, 0]}>
+            <boxGeometry args={[3.2, 0.12, 0.6]} />
+            <meshLambertMaterial color="#7c5a3a" />
+          </mesh>
+          {[-1.3, 0, 1.3].map((lx, i) => (
+            <mesh key={i} position={[lx, 0.16, 0]}>
+              <boxGeometry args={[0.12, 0.32, 0.5]} />
+              <meshLambertMaterial color="#57534e" />
+            </mesh>
+          ))}
+          <mesh position={[s * 1.9, 0.4, 0]}>
+            <boxGeometry args={[0.35, 0.5, 0.35]} />
+            <meshLambertMaterial color="#f97316" />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Fence ad banners */}
+      {[
+        { x: -9, c: '#b91c1c', t: '#fca5a5' },
+        { x: -3, c: '#1d4ed8', t: '#93c5fd' },
+        { x: 3, c: '#15803d', t: '#86efac' },
+        { x: 9, c: '#a16207', t: '#fde047' },
+      ].map((ad, i) => (
+        <group key={`ad${i}`} position={[ad.x, 1.1, 8.95]}>
+          <mesh>
+            <planeGeometry args={[4.5, 1.1]} />
+            <meshLambertMaterial color={ad.c} side={THREE.DoubleSide} />
+          </mesh>
+          {/* Pixel "text" bars */}
+          {[-1.4, -0.4, 0.6].map((bx, j) => (
+            <mesh key={j} position={[bx, 0.05, -0.01]} rotation={[0, Math.PI, 0]}>
+              <planeGeometry args={[0.7, 0.28]} />
+              <meshBasicMaterial color={ad.t} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+
+      {/* Standalone pixel scoreboard tower behind the far crowd */}
+      <group position={[8.5, 0, -15]}>
+        <mesh position={[0, 3, 0]}>
+          <boxGeometry args={[0.3, 6, 0.3]} />
+          <meshLambertMaterial color="#334155" />
+        </mesh>
+        <mesh position={[0, 6.6, 0]}>
+          <boxGeometry args={[3.4, 2, 0.4]} />
+          <meshLambertMaterial color="#0f172a" />
+        </mesh>
+        <mesh position={[-0.8, 6.9, 0.21]}>
+          <planeGeometry args={[1, 0.7]} />
+          <meshBasicMaterial color="#3b82f6" />
+        </mesh>
+        <mesh position={[0.8, 6.9, 0.21]}>
+          <planeGeometry args={[1, 0.7]} />
+          <meshBasicMaterial color="#ef4444" />
+        </mesh>
+        <mesh position={[0, 6.1, 0.21]}>
+          <planeGeometry args={[2.6, 0.3]} />
+          <meshBasicMaterial color="#fbbf24" />
+        </mesh>
+      </group>
 
       {/* Pixel clouds */}
       {[

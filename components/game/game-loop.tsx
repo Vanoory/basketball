@@ -13,10 +13,13 @@ import {
   METER_FILL_TIME,
   METER_PERFECT_CENTER,
   STUN_TIME,
+  DUNK_DUR,
+  DUNK_NAMES,
   distToRim,
   isThree,
   useHud,
   type PlayerData,
+  type ShotStyle,
 } from '@/lib/game'
 
 const V = new THREE.Vector3()
@@ -224,6 +227,37 @@ function tryAnkleBreak(handler: PlayerData, newDirX: number, newDirZ: number) {
 }
 
 // ---------- Shooting ----------
+// Pick a shot style from movement: drifting away from the rim = fadeaway,
+// driving in from short range = floater, otherwise a normal jumper.
+function detectShotStyle(p: PlayerData): ShotStyle {
+  const d = distToRim(p.pos)
+  V3.copy(RIM_GROUND).sub(p.pos).setY(0).normalize()
+  const vdot = p.vel.x * V3.x + p.vel.z * V3.z
+  if (p.speed > 2.0 && vdot < -1.1 && d > 2.7) return 1 // fadeaway
+  if (p.speed > 2.0 && vdot > 1.3 && d < 4.8 && d >= 2.7) return 2 // floater
+  return 0
+}
+
+// Rise up for a shot with the chosen style. Fadeaways keep backward drift,
+// floaters keep forward momentum and release quicker.
+function beginShotRise(p: PlayerData) {
+  const style = detectShotStyle(p)
+  p.shotStyle = style
+  p.anim = 'shoot'
+  p.animT = 0
+  p.grounded = false
+  if (style === 1) {
+    p.vy = 6.2
+    p.vel.multiplyScalar(0.55) // keep drifting back - the fadeaway look
+  } else if (style === 2) {
+    p.vy = 7.0
+    p.vel.multiplyScalar(0.45) // floater carries some drive momentum
+  } else {
+    p.vy = 6.5
+    p.vel.multiplyScalar(0.25)
+  }
+}
+
 function launchShot(shooter: PlayerData, willScore: boolean, points: number) {
   const b = G.ball
   const start = V.set(
@@ -245,7 +279,9 @@ function launchShot(shooter: PlayerData, willScore: boolean, points: number) {
   }
 
   const dist = start.distanceTo(target)
-  const T = 0.75 + dist * 0.055
+  // Floaters get a higher, softer arc; fadeaways hang slightly longer
+  const arcBoost = shooter.shotStyle === 2 ? 0.2 : shooter.shotStyle === 1 ? 0.08 : 0
+  const T = 0.75 + dist * 0.055 + arcBoost
   b.vel.set(
     (target.x - start.x) / T,
     (target.y - start.y) / T - 0.5 * GRAVITY * T,
@@ -264,7 +300,12 @@ function launchShot(shooter: PlayerData, willScore: boolean, points: number) {
 
 function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
   G.scores[team] += points
-  if (points === 3) setMessage('SPLASH! +3', 2)
+  const wasShot = G.ball.state === 'shot'
+  if (scorer && wasShot && scorer.shotStyle === 1)
+    setMessage(`FADEAWAY! +${points}`, 2)
+  else if (scorer && wasShot && scorer.shotStyle === 2)
+    setMessage(`SOFT TOUCH! +${points}`, 2)
+  else if (points === 3) setMessage('SPLASH! +3', 2)
   else setMessage(Math.random() > 0.5 ? 'BUCKETS! +2' : 'GOOD! +2', 2)
   if (scorer) {
     scorer.celebrateT = 1.3
@@ -362,33 +403,76 @@ function startDunk(pl: PlayerData) {
   pl.dunkT = 0
   pl.dunkFrom.copy(pl.pos)
   pl.anim = 'dunk'
+  pl.dunkFacing = Math.atan2(
+    RIM_GROUND.x - pl.pos.x,
+    RIM_GROUND.z - pl.pos.z,
+  )
+  // Pick a dunk based on the approach: fast straight drives unlock the
+  // flashy stuff, slower/short takeoffs get the safe two-hand jam.
+  const speed = Math.hypot(pl.vel.x, pl.vel.z)
+  const roll = Math.random()
+  if (speed > 4.5) {
+    pl.dunkStyle = roll < 0.3 ? 2 : roll < 0.55 ? 3 : roll < 0.8 ? 1 : 4
+  } else if (speed > 2.5) {
+    pl.dunkStyle = roll < 0.35 ? 1 : roll < 0.55 ? 4 : 0
+  } else {
+    pl.dunkStyle = roll < 0.25 ? 1 : 0
+  }
   G.ball.state = 'dunk'
   G.ball.holder = pl.id
-  setMessage('DUNK!', 1.2)
+  setMessage(DUNK_NAMES[pl.dunkStyle], 1.3)
 }
 
 function updateDunk(pl: PlayerData, dt: number) {
-  const DUR = 0.72
+  const DUR = DUNK_DUR[pl.dunkStyle]
   pl.dunkT += dt
   const t = Math.min(pl.dunkT / DUR, 1)
-  const landing = V2.set(RIM_GROUND.x, 0, RIM_GROUND.z + 1.1)
+  // Reverse jam lands behind the rim; everything else lands in front
+  const landZ = pl.dunkStyle === 4 ? RIM_GROUND.z - 0.35 : RIM_GROUND.z + 1.1
+  const landing = V2.set(RIM_GROUND.x, 0, landZ)
   pl.pos.x = THREE.MathUtils.lerp(pl.dunkFrom.x, landing.x, t)
   pl.pos.z = THREE.MathUtils.lerp(pl.dunkFrom.z, landing.z, t)
-  pl.pos.y = Math.sin(Math.min(t, 0.9) * Math.PI) * 2.35
-  pl.facing = Math.atan2(RIM_GROUND.x - pl.pos.x, RIM_GROUND.z - pl.pos.z)
+  // Windmill / 360 hang higher and longer
+  const peak = pl.dunkStyle === 2 || pl.dunkStyle === 3 ? 2.6 : 2.35
+  pl.pos.y = Math.sin(Math.min(t, 0.9) * Math.PI) * peak
+
+  if (pl.dunkStyle === 3) {
+    // Full 360 spin in the air, landing square to the rim
+    pl.facing = pl.dunkFacing + Math.min(t / 0.85, 1) * Math.PI * 2
+  } else if (pl.dunkStyle === 4) {
+    // Reverse: rotate to face away from the rim at the slam
+    pl.facing =
+      pl.dunkFacing + Math.min(t / 0.6, 1) * Math.PI
+  } else {
+    pl.facing = Math.atan2(RIM_GROUND.x - pl.pos.x, RIM_GROUND.z - pl.pos.z)
+  }
 
   const b = G.ball
   if (b.state === 'dunk' && b.holder === pl.id) {
-    if (t < 0.62) {
-      b.pos.set(pl.pos.x, pl.pos.y + 2.3, pl.pos.z)
-      const toRim = V.copy(RIM).sub(b.pos).normalize().multiplyScalar(0.4)
-      b.pos.add(toRim)
+    const slamAt = 0.62
+    if (t < slamAt) {
+      if (pl.dunkStyle === 2) {
+        // Windmill: the ball sweeps a big circle beside the body
+        const wt = t / slamAt
+        const ang = wt * Math.PI * 2 - Math.PI / 2
+        const side = Math.cos(ang) * 0.85
+        const up = Math.sin(ang) * 0.9
+        b.pos.set(
+          pl.pos.x + Math.cos(pl.facing) * side,
+          pl.pos.y + 1.5 + up,
+          pl.pos.z - Math.sin(pl.facing) * side,
+        )
+      } else {
+        b.pos.set(pl.pos.x, pl.pos.y + 2.3, pl.pos.z)
+        const toRim = V.copy(RIM).sub(b.pos).normalize().multiplyScalar(0.4)
+        b.pos.add(toRim)
+      }
     } else {
       b.state = 'loose'
       b.holder = -1
       b.pos.set(RIM.x, RIM.y - 0.3, RIM.z)
       b.vel.set(0, -4, 0.6)
-      G.camShake = 0.35
+      G.camShake = pl.dunkStyle >= 2 ? 0.45 : 0.35
       scoreBasket(pl.team, 2, pl)
     }
   }
@@ -429,9 +513,34 @@ function tryPass(passer: PlayerData, preferId = -1) {
   b.holder = -1
   b.passTo = best.id
   b.pos.set(passer.pos.x, passer.pos.y + 1.3, passer.pos.z)
+  b.passFromY = b.pos.y
   b.spin = 0.3
+  // Arc height scales with distance; if a defender sits in the passing lane
+  // the passer throws a lob over the top instead of a flat chest pass
+  const dist = passer.pos.distanceTo(best.pos)
+  b.passDist = Math.max(dist, 0.01)
+  let laneBlocked = false
+  for (const o of G.players) {
+    if (o.team === passer.team || o.stunT > 0) continue
+    // Distance from the defender to the passer->receiver segment
+    V.copy(best.pos).sub(passer.pos).setY(0)
+    V2.copy(o.pos).sub(passer.pos).setY(0)
+    const tt = THREE.MathUtils.clamp(V2.dot(V) / V.lengthSq(), 0, 1)
+    V.multiplyScalar(tt).add(passer.pos)
+    if (V.distanceTo(o.pos) < 0.9 && tt > 0.12 && tt < 0.88) {
+      laneBlocked = true
+      break
+    }
+  }
+  b.passArc = laneBlocked
+    ? 1.1 + dist * 0.06
+    : THREE.MathUtils.clamp(dist * 0.055, 0.12, 0.55)
   passer.anim = 'pass'
   passer.animT = 0
+  passer.facing = Math.atan2(
+    best.pos.x - passer.pos.x,
+    best.pos.z - passer.pos.z,
+  )
 }
 
 // Openness score for a teammate = distance to nearest defender
@@ -494,6 +603,7 @@ export default function GameLoop() {
   const spaceHeld = useRef(false)
   const stealCooldown = useRef(0)
   const camInit = useRef(false)
+  const defCamBlend = useRef(0)
   const { camera } = useThree()
 
   useEffect(() => {
@@ -555,12 +665,8 @@ export default function GameLoop() {
       if (d < 2.7) {
         startDunk(me)
       } else {
-        me.anim = 'shoot'
-        me.animT = 0
-        me.vy = 6.5
-        me.grounded = false
         const moveSpeed = me.speed
-        me.vel.multiplyScalar(0.25)
+        beginShotRise(me)
         G.meterActive = true
         G.meterValue = 0
         G.shotDist = d
@@ -568,14 +674,25 @@ export default function GameLoop() {
         // Green window shrinks with: distance, contest, and shooting on
         // the move. A sprinting contested deep three is a sliver; a set
         // open mid-range look is generous.
+        // Fadeaways create separation (less contest) but are harder;
+        // floaters are a touch shot with a slightly friendlier window.
+        const styleMod =
+          me.shotStyle === 1 ? -0.018 : me.shotStyle === 2 ? 0.012 : 0
+        const contestMod = me.shotStyle === 1 ? 0.55 : 1
         const half = Math.max(
           0.022,
-          0.115 - d * 0.005 - contest * 0.04 - moveSpeed * 0.0085,
+          0.115 -
+            d * 0.005 -
+            contest * 0.04 * contestMod -
+            moveSpeed * 0.0085 +
+            styleMod,
         )
         G.meterWindow = [
           METER_PERFECT_CENTER - half,
           METER_PERFECT_CENTER + half,
         ]
+        if (me.shotStyle === 1) setMessage('FADEAWAY!', 0.8)
+        if (me.shotStyle === 2) setMessage('FLOATER!', 0.8)
       }
       return
     }
@@ -685,6 +802,7 @@ export default function GameLoop() {
       }
       if (p.anim === 'pass' && p.animT > 0.32) p.anim = 'idle'
       if (p.anim === 'steal' && p.animT > 0.35) p.anim = 'idle'
+      if (p.anim === 'catch' && p.animT > 0.28) p.anim = 'idle'
       p.crossLean *= Math.exp(-6 * dt)
     }
 
@@ -896,13 +1014,18 @@ export default function GameLoop() {
     }
 
     if (p.aiTimer <= 0) {
-      // Open jumper
+      // Open jumper (with style detection: fadeaways / floaters)
       if (defDist > 1.8 && d < 8) {
-        p.anim = 'shoot'
-        p.animT = 0
-        p.vy = 6.5
-        p.grounded = false
-        p.vel.multiplyScalar(0.25)
+        beginShotRise(p)
+        return
+      }
+      // Contested mid-range: sometimes rise for a tough fadeaway anyway
+      if (defDist < 1.2 && d < 6 && d > 2.7 && Math.random() < 0.25) {
+        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        p.vel.x = V2.x * 2.6
+        p.vel.z = V2.z * 2.6
+        p.speed = 2.6
+        beginShotRise(p)
         return
       }
       // Kick out to a wide-open teammate when pressured
@@ -996,7 +1119,24 @@ export default function GameLoop() {
           }
         }
         p.spot.copy(best)
-        p.aiTimer = 2 + Math.random() * 2
+        p.aiTimer = 1.1 + Math.random() * 1.3
+      }
+    }
+
+    // If the handler is driving to the rim, drift along the perimeter to
+    // stay open for the kick-out (real spacing movement)
+    if (handler && handler.team === p.team && !p.cutting) {
+      const handlerDriving =
+        distToRim(handler.pos) < 5.5 &&
+        Math.hypot(handler.vel.x, handler.vel.z) > 3
+      if (handlerDriving && Math.abs(p.spot.x) > 2) {
+        // Slide 1-2m along my side's arc away from the drive lane
+        const drift = handler.pos.x > 0 ? -1 : 1
+        p.spot.x = THREE.MathUtils.clamp(
+          p.spot.x + drift * dt * 2.2 * Math.sign(p.spot.x) * -1,
+          -7,
+          7,
+        )
       }
     }
 
@@ -1019,14 +1159,16 @@ export default function GameLoop() {
       target = V3
     }
 
-    const speed = p.cutting ? 6.4 : 4.6
+    const speed = p.cutting ? 6.4 : 5.2
     steerToward(p, target, speed, 9, dt, 0.35)
 
-    // Small V-cut jitter to shake the defender while waiting on the spot
-    if (p.speed < 1 && p.grounded) {
-      const jit = Math.sin(G.time * 2.2 + p.id * 3)
-      if (Math.abs(jit) > 0.93) {
-        p.vel.x += jit * 1.6 * dt * 10
+    // V-cut jitter to shake the defender while waiting on the spot:
+    // sharp little in-out bursts instead of standing still
+    if (p.speed < 1.2 && p.grounded) {
+      const jit = Math.sin(G.time * 2.6 + p.id * 3)
+      if (Math.abs(jit) > 0.88) {
+        p.vel.x += jit * 2.4 * dt * 10
+        p.vel.z += Math.cos(G.time * 1.9 + p.id * 2) * 1.4 * dt * 10
       }
     }
   }
@@ -1221,11 +1363,17 @@ export default function GameLoop() {
 
     if (b.state === 'pass') {
       const target = G.players[b.passTo]
-      V.set(target.pos.x, target.pos.y + 1.25, target.pos.z).sub(b.pos)
-      const d = V.length()
+      // Horizontal homing toward the receiver's chest
+      V.set(target.pos.x, 0, target.pos.z)
+      V2.set(b.pos.x, 0, b.pos.z)
+      V.sub(V2)
+      const dFlat = V.length()
       const step = 15 * dt
       for (const o of G.players) {
         if (o.team === target.team || o.stunT > 0) continue
+        // Lobs sail over a grounded defender's reach
+        const reach = o.grounded ? 2.1 : 2.9
+        if (b.pos.y - o.pos.y > reach) continue
         if (o.pos.clone().setY(b.pos.y).distanceTo(b.pos) < 0.55) {
           b.state = 'held'
           b.holder = o.id
@@ -1234,13 +1382,23 @@ export default function GameLoop() {
           return
         }
       }
-      if (d <= step + 0.35) {
+      if (dFlat <= step + 0.3) {
         b.state = 'held'
         b.holder = target.id
+        target.anim = 'catch'
+        target.animT = 0
         onPossessionGained(target)
       } else {
         V.normalize().multiplyScalar(step)
-        b.pos.add(V)
+        b.pos.x += V.x
+        b.pos.z += V.z
+        // Arc: sine bump between launch height and the receiver's chest
+        const prog = THREE.MathUtils.clamp(1 - dFlat / b.passDist, 0, 1)
+        const targetY = target.pos.y + 1.25
+        b.pos.y =
+          THREE.MathUtils.lerp(b.passFromY, targetY, prog) +
+          Math.sin(prog * Math.PI) * b.passArc
+        b.spin = 0.32
       }
       return
     }
@@ -1359,6 +1517,30 @@ export default function GameLoop() {
     const camDist = 11.4 - rimT * 2.6
     V.set(fx * (0.5 + rimT * 0.18), camH, fz * 0.42 + camDist)
     V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
+
+    // DEFENSE CAM: when your team is defending, glide behind the hoop so
+    // you see the attack coming at you - much easier to read drives/cuts.
+    const wantDef =
+      G.phase === 'play' &&
+      G.possession === 1 &&
+      b.state !== 'shot' &&
+      b.state !== 'dunk'
+        ? 1
+        : 0
+    defCamBlend.current +=
+      (wantDef - defCamBlend.current) * (1 - Math.exp(-2.2 * dt))
+    const db = defCamBlend.current
+    if (db > 0.01) {
+      // Behind and above the backboard, offset slightly toward the ball side
+      V3.set(
+        THREE.MathUtils.clamp(fx * 0.45, -3.2, 3.2),
+        6.4 - rimT * 0.6,
+        RIM_GROUND.z - 5.6,
+      )
+      V.lerp(V3, db)
+      V3.set(fx * 0.8, 0.9 + airT * 0.8, THREE.MathUtils.clamp(fz, -8, 4) * 0.85)
+      V2.lerp(V3, db)
+    }
 
     if (!camInit.current) {
       G.camPos.copy(V)
