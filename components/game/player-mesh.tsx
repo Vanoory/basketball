@@ -127,6 +127,19 @@ export default function PlayerMesh({ id }: Props) {
         bodyBob = Math.abs(Math.sin(t * 8)) * 0.12
         break
       }
+      case 'stumble': {
+        // Legs crossed up, arms windmilling for balance
+        const w = Math.sin(t * 16) * 0.5
+        lArmX = -0.9 + w
+        rArmX = -0.9 - w
+        lArmZ = 0.8
+        rArmZ = -0.8
+        lLegX = 0.45
+        rLegX = -0.35
+        bodyLean = 0.42
+        bodyBob = -0.12 + Math.sin(t * 14) * 0.03
+        break
+      }
       case 'fall': {
         // Handled below via tilt; arms flail out
         lArmX = -1.4
@@ -153,8 +166,9 @@ export default function PlayerMesh({ id }: Props) {
     tilt.current.rotation.x = -fallAmt * 1.5
     tilt.current.position.y = -fallAmt * 0.12
 
-    // Crossover side lean (from dribble moves)
-    tilt.current.rotation.z = pl.crossLean
+    // Crossover side lean (from dribble moves) + stagger wobble
+    tilt.current.rotation.z =
+      pl.crossLean + (pl.stumbleT > 0 ? Math.sin(t * 13) * 0.16 : 0)
 
     if (lArm.current) {
       lArm.current.rotation.x = lArmX

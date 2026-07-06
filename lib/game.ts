@@ -26,6 +26,7 @@ export type PlayerAnim =
   | 'pass'
   | 'celebrate'
   | 'steal'
+  | 'stumble'
 
 export interface PlayerData {
   id: number
@@ -45,6 +46,7 @@ export interface PlayerData {
   dunkT: number
   dunking: boolean
   stunT: number // > 0 => knocked down (ankle break)
+  stumbleT: number // > 0 => staggered but on his feet (light cross)
   ankleCd: number // cooldown so the same defender is not dropped every frame
   reactT: number // defender reaction delay accumulator
   reactTarget: THREE.Vector3 // where the defender THINKS he should be
@@ -121,6 +123,7 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     dunkT: 0,
     dunking: false,
     stunT: 0,
+    stumbleT: 0,
     ankleCd: 0,
     reactT: 0,
     reactTarget: new THREE.Vector3(x, 0, z),

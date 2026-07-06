@@ -118,26 +118,43 @@ function knockDown(def: PlayerData, msg = 'ANKLES GONE!') {
 // A sharp direction change by the ball handler near a defender can drop him.
 // Sharper cut + faster defender momentum = higher chance.
 function tryAnkleBreak(handler: PlayerData, newDirX: number, newDirZ: number) {
-  if (handler.speed < 3.4) return
+  if (handler.speed < 2.8) return
   const vlen = Math.hypot(handler.vel.x, handler.vel.z)
   if (vlen < 0.1) return
   const dot =
     (handler.vel.x / vlen) * newDirX + (handler.vel.z / vlen) * newDirZ
-  if (dot > -0.35) return // not a sharp cut
+  if (dot > -0.2) return // not a sharp cut
 
   for (const def of G.players) {
-    if (def.team === handler.team || def.stunT > 0 || def.ankleCd > 0) continue
+    if (
+      def.team === handler.team ||
+      def.stunT > 0 ||
+      def.stumbleT > 0 ||
+      def.ankleCd > 0
+    )
+      continue
     const d = def.pos.distanceTo(handler.pos)
-    if (d > 1.7) continue
+    if (d > 2.1) continue
     const defSpeed = Math.hypot(def.vel.x, def.vel.z)
-    // Defender must be moving (committed to a direction) to get crossed
-    if (defSpeed < 2.2) continue
-    const sharpness = -dot // 0.35..1
-    const chance = 0.28 + sharpness * 0.3 + Math.min(defSpeed / 14, 0.22)
-    def.ankleCd = 2.0 // even on a miss, brief immunity
-    if (Math.random() < chance) {
+    const sharpness = -dot // 0.2..1
+    // Full knockdown needs a committed (moving) defender + sharp cut.
+    // A staggering stumble can happen even against a set defender.
+    const fallChance =
+      defSpeed < 1.2
+        ? 0
+        : 0.2 + sharpness * 0.35 + Math.min(defSpeed / 12, 0.25)
+    const stumbleChance = 0.4 + sharpness * 0.35
+    def.ankleCd = 1.4 // even on a miss, brief immunity
+    const roll = Math.random()
+    if (roll < fallChance) {
       knockDown(def)
       handler.crossLean = newDirX * 0.5
+    } else if (roll < stumbleChance) {
+      def.stumbleT = 0.55 + sharpness * 0.3
+      def.anim = 'stumble'
+      def.animT = 0
+      def.vel.multiplyScalar(0.25)
+      handler.crossLean = newDirX * 0.4
     }
   }
 }
@@ -543,6 +560,13 @@ export default function GameLoop() {
           p.anim = 'idle'
         }
       }
+      if (p.stumbleT > 0) {
+        p.stumbleT -= dt
+        if (p.stumbleT <= 0) {
+          p.stumbleT = 0
+          if (p.anim === 'stumble') p.anim = 'idle'
+        }
+      }
       if (p.ankleCd > 0) p.ankleCd -= dt
       if (p.celebrateT > 0) {
         p.celebrateT -= dt
@@ -605,6 +629,10 @@ export default function GameLoop() {
   function updateControlledPlayer(dt: number) {
     const me = G.players[G.controlled]
     if (me.dunking || me.stunT > 0) return
+    if (me.stumbleT > 0) {
+      applyMove(me, 0, 0, 0, 14, dt)
+      return
+    }
     const b = G.ball
     const shooting = me.anim === 'shoot' && !me.grounded
 
@@ -665,6 +693,11 @@ export default function GameLoop() {
 
     for (const p of G.players) {
       if (p.id === G.controlled || p.dunking || p.stunT > 0) continue
+      if (p.stumbleT > 0) {
+        // Staggered: can't pursue, just bleed momentum
+        applyMove(p, 0, 0, 0, 14, dt)
+        continue
+      }
       if (b.state === 'loose' && (p.id === chaser0 || p.id === chaser1)) {
         V3.set(b.pos.x, 0, b.pos.z)
         steerToward(p, V3, 6.6, 10, dt, 0.1)
