@@ -90,6 +90,8 @@ export interface GameData {
   camLook: THREE.Vector3
   camShake: number
   time: number
+  mustClear: boolean // new possession must take the ball beyond the arc
+  inboundTeam: -1 | 0 | 1 // after a made basket only this team may pick it up
 }
 
 // ---------- Factory ----------
@@ -173,6 +175,8 @@ export function createGame(): GameData {
     camLook: new THREE.Vector3(0, 1, -4),
     camShake: 0,
     time: 0,
+    mustClear: false,
+    inboundTeam: -1,
   }
 }
 

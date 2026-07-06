@@ -137,14 +137,21 @@ function tryAnkleBreak(handler: PlayerData, newDirX: number, newDirZ: number) {
     if (d > 2.1) continue
     const defSpeed = Math.hypot(def.vel.x, def.vel.z)
     const sharpness = -dot // 0.2..1
+    // The human player is much harder to shake: he only goes down when
+    // sprinting into a truly vicious cut, and gets longer immunity after.
+    const isUser = def.id === G.controlled
     // Full knockdown needs a committed (moving) defender + sharp cut.
     // A staggering stumble can happen even against a set defender.
-    const fallChance =
+    let fallChance =
       defSpeed < 1.2
         ? 0
         : 0.2 + sharpness * 0.35 + Math.min(defSpeed / 12, 0.25)
-    const stumbleChance = 0.4 + sharpness * 0.35
-    def.ankleCd = 1.4 // even on a miss, brief immunity
+    let stumbleChance = 0.4 + sharpness * 0.35
+    if (isUser) {
+      fallChance = defSpeed < 3.6 ? 0 : fallChance * 0.25
+      stumbleChance *= 0.3
+    }
+    def.ankleCd = isUser ? 2.6 : 1.4 // even on a miss, brief immunity
     const roll = Math.random()
     if (roll < fallChance) {
       knockDown(def)
@@ -209,7 +216,15 @@ function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
     G.phase = 'over'
     setMessage(team === 0 ? 'YOU WIN!' : 'RED TEAM WINS!', 99)
   } else {
-    startReset(team === 0 ? 1 : 0, 1.4)
+    // No stoppage: the other team takes the ball under the rim and
+    // must clear it beyond the arc before attacking.
+    const other = (team === 0 ? 1 : 0) as 0 | 1
+    G.possession = other
+    G.mustClear = true
+    G.inboundTeam = other
+    if (other === 0) {
+      G.controlled = nearestOf(0, RIM_GROUND)
+    }
   }
 }
 
@@ -594,6 +609,15 @@ export default function GameLoop() {
       }
       checkBlocks()
       updateBall(dt)
+
+      // "Clear the ball" rule: new possession must take it beyond the arc
+      if (G.mustClear && G.ball.state === 'held' && G.ball.holder >= 0) {
+        const h = G.players[G.ball.holder]
+        if (h.team === G.possession && isThree(h.pos)) {
+          G.mustClear = false
+          setMessage('BALL IN - GO!', 1.1)
+        }
+      }
     }
 
     // Gravity / landing for everyone
@@ -1098,18 +1122,19 @@ export default function GameLoop() {
 
   function onPossessionGained(p: PlayerData) {
     const prev = G.possession
+    G.inboundTeam = -1
     if (p.team !== prev) {
-      setMessage(p.team === 0 ? 'REBOUND! YOUR BALL' : 'RED BALL!', 1.3)
-      startReset(p.team as 0 | 1, 1.0)
-    } else {
+      // Change of possession: play on, but the ball must be cleared
       G.possession = p.team as 0 | 1
-      if (p.team === 0) {
-        G.controlled = p.id
-      } else {
-        G.controlled = nearestOf(0, p.pos)
-      }
-      p.aiTimer = 2 + Math.random() * 2
+      G.mustClear = true
+      setMessage(p.team === 0 ? 'YOUR BALL - CLEAR IT!' : 'RED BALL!', 1.4)
     }
+    if (p.team === 0) {
+      G.controlled = p.id
+    } else {
+      G.controlled = nearestOf(0, p.pos)
+    }
+    p.aiTimer = 2 + Math.random() * 2
   }
 
   function updateCamera(dt: number) {
