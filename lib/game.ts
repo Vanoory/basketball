@@ -11,14 +11,27 @@ export const WIN_SCORE = 21
 
 export const METER_FILL_TIME = 1.05 // seconds to fill meter fully
 export const METER_PERFECT_CENTER = 0.72
+export const STUN_TIME = 1.25 // how long a player stays down after ankle-break
 
 // ---------- Types ----------
-export type PlayerAnim = 'idle' | 'run' | 'shoot' | 'dunk' | 'jump'
+export type PlayerAnim =
+  | 'idle'
+  | 'run'
+  | 'shoot'
+  | 'dunk'
+  | 'jump'
+  | 'block'
+  | 'shuffle'
+  | 'fall'
+  | 'pass'
+  | 'celebrate'
+  | 'steal'
 
 export interface PlayerData {
   id: number
   team: 0 | 1
   pos: THREE.Vector3
+  vel: THREE.Vector3 // momentum-based movement
   facing: number
   anim: PlayerAnim
   animT: number
@@ -27,9 +40,17 @@ export interface PlayerData {
   speed: number
   aiTimer: number
   spot: THREE.Vector3
+  cutting: boolean // backdoor cut in progress
   dunkFrom: THREE.Vector3
   dunkT: number
   dunking: boolean
+  stunT: number // > 0 => knocked down (ankle break)
+  ankleCd: number // cooldown so the same defender is not dropped every frame
+  reactT: number // defender reaction delay accumulator
+  reactTarget: THREE.Vector3 // where the defender THINKS he should be
+  crossLean: number // sideways lean for crossover animation
+  celebrateT: number
+  helpDef: boolean // temporarily rotating onto ball handler
   colors: { jersey: string; shorts: string; skin: string; hair: string }
 }
 
@@ -65,6 +86,7 @@ export interface GameData {
   messageT: number
   camPos: THREE.Vector3
   camLook: THREE.Vector3
+  camShake: number
   time: number
 }
 
@@ -85,6 +107,7 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     id,
     team,
     pos: new THREE.Vector3(x, 0, z),
+    vel: new THREE.Vector3(),
     facing: Math.PI, // face the hoop (-z)
     anim: 'idle',
     animT: 0,
@@ -93,9 +116,17 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     speed: 0,
     aiTimer: 1 + Math.random() * 2,
     spot: new THREE.Vector3(x, 0, z),
+    cutting: false,
     dunkFrom: new THREE.Vector3(),
     dunkT: 0,
     dunking: false,
+    stunT: 0,
+    ankleCd: 0,
+    reactT: 0,
+    reactTarget: new THREE.Vector3(x, 0, z),
+    crossLean: 0,
+    celebrateT: 0,
+    helpDef: false,
     colors: team === 0 ? TEAM0[id % 3] : TEAM1[id % 3],
   }
 }
@@ -137,12 +168,16 @@ export function createGame(): GameData {
     messageT: 2.5,
     camPos: new THREE.Vector3(0, 8, 14),
     camLook: new THREE.Vector3(0, 1, -4),
+    camShake: 0,
     time: 0,
   }
 }
 
 // Mutable singleton game state (perf: avoid React re-renders in the sim loop)
 export const G: GameData = createGame()
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__G = G
+}
 
 export function distToRim(p: THREE.Vector3) {
   const dx = p.x - RIM_GROUND.x
