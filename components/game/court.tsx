@@ -461,29 +461,6 @@ function Bench({ x, z, rot = 0 }: { x: number; z: number; rot?: number }) {
   )
 }
 
-function Stars() {
-  const positions = useMemo(() => {
-    const arr = new Float32Array(140 * 3)
-    for (let i = 0; i < 140; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 110
-      arr[i * 3 + 1] = 12 + Math.random() * 30
-      arr[i * 3 + 2] = -30 - Math.random() * 25
-    }
-    return arr
-  }, [])
-  return (
-    <points>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          args={[positions, 3]}
-        />
-      </bufferGeometry>
-      <pointsMaterial color="#e2e8f0" size={0.22} sizeAttenuation />
-    </points>
-  )
-}
-
 function Environment() {
   return (
     <group>
