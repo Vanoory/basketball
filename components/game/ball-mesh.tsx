@@ -89,16 +89,29 @@ export default function BallMesh() {
 
       <group ref={ref}>
         <mesh castShadow>
-          <sphereGeometry args={[0.17, 10, 8]} />
+          <sphereGeometry args={[0.17, 12, 10]} />
           <meshLambertMaterial color="#f97316" />
         </mesh>
-        {/* Seams */}
+        {/* Full seam pattern: equator, two meridians, and channel arcs */}
         <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.17, 0.012, 4, 16]} />
+          <torusGeometry args={[0.17, 0.011, 4, 18]} />
           <meshBasicMaterial color="#7c2d12" />
         </mesh>
         <mesh>
-          <torusGeometry args={[0.17, 0.012, 4, 16]} />
+          <torusGeometry args={[0.17, 0.011, 4, 18]} />
+          <meshBasicMaterial color="#7c2d12" />
+        </mesh>
+        <mesh rotation={[0, Math.PI / 2, 0]}>
+          <torusGeometry args={[0.17, 0.011, 4, 18]} />
+          <meshBasicMaterial color="#7c2d12" />
+        </mesh>
+        {/* Curved side channels */}
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.085, 0]}>
+          <torusGeometry args={[0.146, 0.01, 4, 16]} />
+          <meshBasicMaterial color="#7c2d12" />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -0.085, 0]}>
+          <torusGeometry args={[0.146, 0.01, 4, 16]} />
           <meshBasicMaterial color="#7c2d12" />
         </mesh>
       </group>

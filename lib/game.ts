@@ -42,6 +42,19 @@ export const DUNK_NAMES = [
 // Shot styles: 0 jumper, 1 fadeaway, 2 floater
 export type ShotStyle = 0 | 1 | 2
 
+// ---------- Player identity / look ----------
+export type HairStyle = 'afro' | 'flattop' | 'buzz' | 'hightop' | 'bun' | 'curls'
+
+export interface PlayerLook {
+  h: number // height scale (silhouette variety)
+  w: number // width / build scale
+  hair: HairStyle
+  headband: boolean
+  sleeve: 'none' | 'left' | 'right' // shooting-arm compression sleeve
+  legSleeve: boolean
+  number: number // jersey number 0-99
+}
+
 export interface PlayerData {
   id: number
   team: 0 | 1
@@ -73,6 +86,7 @@ export interface PlayerData {
   screenedT: number // > 0 => caught on a screen / body, slowed down
   trailing: boolean // defender got beaten and is sprinting to recover
   colors: { jersey: string; shorts: string; skin: string; hair: string }
+  look: PlayerLook
 }
 
 export type BallState = 'held' | 'shot' | 'pass' | 'loose' | 'dunk'
@@ -128,6 +142,19 @@ const TEAM1 = [
   { jersey: '#ef4444', shorts: '#b91c1c', skin: '#c68642', hair: '#44403c' },
 ]
 
+// Each player gets his own silhouette, hair, and gear so nobody looks
+// like a clone. Index = player id (0-2 team 0, 3-5 team 1).
+const LOOKS: PlayerLook[] = [
+  // Team 0 - blue
+  { h: 0.96, w: 0.94, hair: 'buzz', headband: true, sleeve: 'right', legSleeve: false, number: 1 },
+  { h: 1.1, w: 1.12, hair: 'afro', headband: false, sleeve: 'none', legSleeve: true, number: 34 },
+  { h: 1.02, w: 0.98, hair: 'hightop', headband: false, sleeve: 'left', legSleeve: false, number: 7 },
+  // Team 1 - red
+  { h: 0.99, w: 0.96, hair: 'bun', headband: true, sleeve: 'none', legSleeve: false, number: 0 },
+  { h: 1.12, w: 1.14, hair: 'flattop', headband: false, sleeve: 'none', legSleeve: true, number: 55 },
+  { h: 0.94, w: 0.92, hair: 'curls', headband: false, sleeve: 'right', legSleeve: false, number: 23 },
+]
+
 function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
   return {
     id,
@@ -160,6 +187,7 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     screenedT: 0,
     trailing: false,
     colors: team === 0 ? TEAM0[id % 3] : TEAM1[id % 3],
+    look: LOOKS[id % LOOKS.length],
   }
 }
 

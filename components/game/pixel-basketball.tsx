@@ -11,7 +11,7 @@ export default function PixelBasketball() {
   return (
     <div className="relative h-screen w-full">
       <Canvas
-        dpr={0.7}
+        dpr={0.8}
         camera={{ position: [0, 8, 14], fov: 50 }}
         gl={{ antialias: false }}
         shadows
@@ -21,13 +21,13 @@ export default function PixelBasketball() {
 
         {/* Night game lighting */}
         <hemisphereLight
-          args={['#b7c6e0', '#1e293b', 0.5]}
+          args={['#b7c6e0', '#1e293b', 0.55]}
           position={[0, 20, 0]}
         />
         <ambientLight intensity={0.35} color="#b7c6e0" />
         <directionalLight
           position={[8, 14, 6]}
-          intensity={1.5}
+          intensity={1.6}
           color="#fff7e0"
           castShadow
           shadow-mapSize-width={2048}
@@ -37,11 +37,18 @@ export default function PixelBasketball() {
           shadow-camera-top={14}
           shadow-camera-bottom={-16}
           shadow-camera-far={40}
+          shadow-bias={-0.0004}
         />
         <directionalLight
           position={[-6, 10, -6]}
-          intensity={0.4}
+          intensity={0.45}
           color="#93b4e6"
+        />
+        {/* Cool back rim light so players pop off the court */}
+        <directionalLight
+          position={[0, 6, 12]}
+          intensity={0.3}
+          color="#7da4dd"
         />
         {/* Rim spotlight glow */}
         <pointLight position={[0, 5, -9.4]} intensity={14} color="#ffedd5" distance={9} />

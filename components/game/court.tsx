@@ -542,8 +542,6 @@ function Environment() {
         </mesh>
       </group>
 
-      <Stars />
-
       {/* Pixel stars */}
       <Stars />
 
