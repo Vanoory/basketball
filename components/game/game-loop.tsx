@@ -5,8 +5,6 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import {
   G,
-  RIM,
-  RIM_GROUND,
   COURT,
   GRAVITY,
   WIN_SCORE,
@@ -17,6 +15,8 @@ import {
   DUNK_NAMES,
   distToRim,
   isThree,
+  rimOf,
+  rimGroundOf,
   useHud,
   THREE_PT_RADIUS,
   type PlayerData,
@@ -28,6 +28,7 @@ const V = new THREE.Vector3()
 const V2 = new THREE.Vector3()
 const V3 = new THREE.Vector3()
 
+// Half-court spots (3v3) - built around the -z rim
 const OFFENSE_SPOTS = [
   new THREE.Vector3(-6.9, 0, -8.6), // left corner
   new THREE.Vector3(6.9, 0, -8.6), // right corner
@@ -37,6 +38,26 @@ const OFFENSE_SPOTS = [
   new THREE.Vector3(3.2, 0, 0.5), // right top
   new THREE.Vector3(0, 0, 1.8), // top of key
 ]
+
+// 5v5 spots: pulled in tighter so the offense stays in its frontcourt
+const OFFENSE_SPOTS_5A = [
+  new THREE.Vector3(-6.9, 0, -8.6),
+  new THREE.Vector3(6.9, 0, -8.6),
+  new THREE.Vector3(-6.2, 0, -4.6),
+  new THREE.Vector3(6.2, 0, -4.6),
+  new THREE.Vector3(-3.2, 0, -1.4),
+  new THREE.Vector3(3.2, 0, -1.4),
+  new THREE.Vector3(0, 0, -2.4),
+]
+// Mirrored spots for the team attacking the +z rim
+const OFFENSE_SPOTS_5B = OFFENSE_SPOTS_5A.map(
+  (s) => new THREE.Vector3(s.x, 0, -s.z),
+)
+
+function offenseSpots(team: 0 | 1) {
+  if (G.mode === '3v3') return OFFENSE_SPOTS
+  return team === 0 ? OFFENSE_SPOTS_5A : OFFENSE_SPOTS_5B
+}
 
 function clampCourt(p: THREE.Vector3, pad = 0) {
   p.x = Math.max(COURT.minX + pad, Math.min(COURT.maxX - pad, p.x))
@@ -246,8 +267,8 @@ function tryAnkleBreak(handler: PlayerData, newDirX: number, newDirZ: number) {
 // Pick a shot style from movement: drifting away from the rim = fadeaway,
 // driving in from short range = floater, otherwise a normal jumper.
 function detectShotStyle(p: PlayerData): ShotStyle {
-  const d = distToRim(p.pos)
-  V3.copy(RIM_GROUND).sub(p.pos).setY(0).normalize()
+  const d = distToRim(p.pos, p.team)
+  V3.copy(rimGroundOf(p.team)).sub(p.pos).setY(0).normalize()
   const vdot = p.vel.x * V3.x + p.vel.z * V3.z
   if (p.speed > 2.0 && vdot < -1.1 && d > 2.7) return 1 // fadeaway
   if (p.speed > 2.0 && vdot > 1.3 && d < 4.8 && d >= 2.7) return 2 // floater
@@ -264,7 +285,8 @@ function beginShotRise(p: PlayerData) {
   p.grounded = false
   // Always square up to the rim - even on step-backs and fadeaways the
   // shooter's chest turns toward the basket as he rises.
-  p.facing = Math.atan2(RIM_GROUND.x - p.pos.x, RIM_GROUND.z - p.pos.z)
+  const rg = rimGroundOf(p.team)
+  p.facing = Math.atan2(rg.x - p.pos.x, rg.z - p.pos.z)
   if (style === 1) {
     p.vy = 6.2
     p.vel.multiplyScalar(0.55) // keep drifting back - the fadeaway look
@@ -285,14 +307,15 @@ function launchShot(shooter: PlayerData, willScore: boolean, points: number) {
     shooter.pos.z,
   ).clone()
 
+  const rim = rimOf(shooter.team)
   let target: THREE.Vector3
   if (willScore) {
-    target = RIM.clone()
-    target.y = RIM.y + 0.02
+    target = rim.clone()
+    target.y = rim.y + 0.02
   } else {
     const ang = Math.random() * Math.PI * 2
     const r = 0.35 + Math.random() * 0.3
-    target = RIM.clone().add(
+    target = rim.clone().add(
       new THREE.Vector3(Math.cos(ang) * r, 0.05, Math.sin(ang) * r * 0.6),
     )
   }
@@ -333,14 +356,15 @@ function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
     G.phase = 'over'
     setMessage(team === 0 ? 'YOU WIN!' : 'RED TEAM WINS!', 99)
   } else {
-    // No stoppage: the other team takes the ball under the rim and
-    // must clear it beyond the arc before attacking.
+    // No stoppage: the other team takes the ball under the rim it was
+    // scored on. In 3v3 it must be cleared beyond the arc; in 5v5 the
+    // team simply pushes the break toward the opposite basket.
     const other = (team === 0 ? 1 : 0) as 0 | 1
     G.possession = other
-    G.mustClear = true
+    G.mustClear = G.mode === '3v3'
     G.inboundTeam = other
     if (other === 0) {
-      G.controlled = nearestOf(0, RIM_GROUND)
+      G.controlled = nearestOf(0, rimGroundOf(team))
     }
   }
 }
@@ -360,11 +384,22 @@ function applyReset() {
   G.possession = team
   const off = G.players.filter((p) => p.team === team)
   const def = G.players.filter((p) => p.team !== team)
+  const rg = rimGroundOf(team)
+  // Base formations are built for attacking the -z rim; mirror for +z
+  const m = rg.z < 0 ? 1 : -1
 
   const handler = off[0]
-  handler.pos.set(0, 0, 3.4)
-  off[1].pos.set(-5.6, 0, -1.8)
-  off[2].pos.set(5.6, 0, -1.8)
+  if (G.mode === '3v3') {
+    handler.pos.set(0, 0, 3.4)
+    off[1].pos.set(-5.6, 0, -1.8)
+    off[2].pos.set(5.6, 0, -1.8)
+  } else {
+    handler.pos.set(0, 0, 2.5 * m)
+    off[1].pos.set(-5.6, 0, -1.0 * m)
+    off[2].pos.set(5.6, 0, -1.0 * m)
+    off[3].pos.set(-2.8, 0, -4.5 * m)
+    off[4].pos.set(2.8, 0, -4.5 * m)
+  }
 
   for (const p of G.players) {
     p.vy = 0
@@ -379,17 +414,20 @@ function applyReset() {
     p.screenedT = 0
     p.trailing = false
     p.vel.set(0, 0, 0)
-    p.facing = Math.PI
     p.aiTimer = 1.5 + Math.random() * 2
     p.reactT = 0
   }
-  // Defenders line up between their man and the rim
-  for (let i = 0; i < 3; i++) {
+  // Defenders line up between their man and the defended rim
+  for (let i = 0; i < G.perTeam; i++) {
     const man = off[i]
-    V.copy(RIM_GROUND).sub(man.pos).normalize().multiplyScalar(1.4)
+    V.copy(rg).sub(man.pos).normalize().multiplyScalar(1.4)
     def[i].pos.copy(man.pos).add(V)
     def[i].pos.y = 0
     def[i].reactTarget.copy(def[i].pos)
+  }
+  // Everyone squares up toward the attacked rim
+  for (const p of G.players) {
+    p.facing = Math.atan2(rg.x - p.pos.x, rg.z - p.pos.z)
   }
 
   const b = G.ball
@@ -418,14 +456,12 @@ function nearestOf(team: 0 | 1, pos: THREE.Vector3) {
 
 // ---------- Dunk ----------
 function startDunk(pl: PlayerData) {
+  const rg = rimGroundOf(pl.team)
   pl.dunking = true
   pl.dunkT = 0
   pl.dunkFrom.copy(pl.pos)
   pl.anim = 'dunk'
-  pl.dunkFacing = Math.atan2(
-    RIM_GROUND.x - pl.pos.x,
-    RIM_GROUND.z - pl.pos.z,
-  )
+  pl.dunkFacing = Math.atan2(rg.x - pl.pos.x, rg.z - pl.pos.z)
   // Pick a dunk based on the approach: fast straight drives unlock the
   // flashy stuff, slower/short takeoffs get the safe two-hand jam.
   const speed = Math.hypot(pl.vel.x, pl.vel.z)
@@ -443,12 +479,17 @@ function startDunk(pl: PlayerData) {
 }
 
 function updateDunk(pl: PlayerData, dt: number) {
+  const rg = rimGroundOf(pl.team)
+  const rim = rimOf(pl.team)
+  // "In front" of the rim = toward the court center
+  const inFront = rg.z < 0 ? 1 : -1
   const DUR = DUNK_DUR[pl.dunkStyle]
   pl.dunkT += dt
   const t = Math.min(pl.dunkT / DUR, 1)
   // Reverse jam lands behind the rim; everything else lands in front
-  const landZ = pl.dunkStyle === 4 ? RIM_GROUND.z - 0.35 : RIM_GROUND.z + 1.1
-  const landing = V2.set(RIM_GROUND.x, 0, landZ)
+  const landZ =
+    pl.dunkStyle === 4 ? rg.z - 0.35 * inFront : rg.z + 1.1 * inFront
+  const landing = V2.set(rg.x, 0, landZ)
   pl.pos.x = THREE.MathUtils.lerp(pl.dunkFrom.x, landing.x, t)
   pl.pos.z = THREE.MathUtils.lerp(pl.dunkFrom.z, landing.z, t)
   // Windmill / 360 hang higher and longer
@@ -463,7 +504,7 @@ function updateDunk(pl: PlayerData, dt: number) {
     pl.facing =
       pl.dunkFacing + Math.min(t / 0.6, 1) * Math.PI
   } else {
-    pl.facing = Math.atan2(RIM_GROUND.x - pl.pos.x, RIM_GROUND.z - pl.pos.z)
+    pl.facing = Math.atan2(rg.x - pl.pos.x, rg.z - pl.pos.z)
   }
 
   const b = G.ball
@@ -483,14 +524,14 @@ function updateDunk(pl: PlayerData, dt: number) {
         )
       } else {
         b.pos.set(pl.pos.x, pl.pos.y + 2.3, pl.pos.z)
-        const toRim = V.copy(RIM).sub(b.pos).normalize().multiplyScalar(0.4)
+        const toRim = V.copy(rim).sub(b.pos).normalize().multiplyScalar(0.4)
         b.pos.add(toRim)
       }
     } else {
       b.state = 'loose'
       b.holder = -1
-      b.pos.set(RIM.x, RIM.y - 0.3, RIM.z)
-      b.vel.set(0, -4, 0.6)
+      b.pos.set(rim.x, rim.y - 0.3, rim.z)
+      b.vel.set(0, -4, 0.6 * inFront)
       G.camShake = pl.dunkStyle >= 2 ? 0.45 : 0.35
       scoreBasket(pl.team, 2, pl)
     }
@@ -573,7 +614,8 @@ function rejectBall(p: PlayerData, msgUser: string, msgRed: string) {
   b.state = 'loose'
   b.holder = -1
   b.shotWillScore = false
-  V2.copy(b.pos).sub(RIM).setY(0)
+  // Swat away from the rim the OFFENSE was attacking
+  V2.copy(b.pos).sub(rimOf(G.possession)).setY(0)
   if (V2.lengthSq() < 0.01) V2.set(0, 0, 1)
   V2.normalize()
   b.vel.set(V2.x * 5.5, 2.4, V2.z * 5.5)

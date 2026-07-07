@@ -4,10 +4,30 @@ import { create } from 'zustand'
 // ---------- Constants ----------
 export const RIM = new THREE.Vector3(0, 3.05, -9.4)
 export const RIM_GROUND = new THREE.Vector3(0, 0, -9.4)
+// Second basket for the 5v5 full court (mirrored across midcourt)
+export const RIM_B = new THREE.Vector3(0, 3.05, 9.4)
+export const RIM_B_GROUND = new THREE.Vector3(0, 0, 9.4)
 export const THREE_PT_RADIUS = 6.6
+// Mutable court bounds - swapped when the game mode changes
 export const COURT = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 4.6 }
+const COURT_3V3 = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 4.6 }
+const COURT_5V5 = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 10.9 }
 export const GRAVITY = -20
 export const WIN_SCORE = 21
+
+// ---------- Game modes ----------
+export type GameMode = '3v3' | '5v5'
+
+// In 3v3 both teams attack the single half-court rim.
+// In 5v5 team 0 attacks the -z rim (RIM), team 1 attacks the +z rim (RIM_B).
+export function attackRim(mode: GameMode, team: 0 | 1) {
+  if (mode === '5v5' && team === 1) return RIM_B
+  return RIM
+}
+export function attackRimGround(mode: GameMode, team: 0 | 1) {
+  if (mode === '5v5' && team === 1) return RIM_B_GROUND
+  return RIM_GROUND
+}
 
 export const METER_FILL_TIME = 1.05 // seconds to fill meter fully
 export const METER_PERFECT_CENTER = 0.72
@@ -122,6 +142,8 @@ export interface BallData {
 }
 
 export interface GameData {
+  mode: GameMode
+  perTeam: number // 3 or 5 - team 0 ids are 0..perTeam-1, team 1 follows
   players: PlayerData[]
   ball: BallData
   possession: 0 | 1
@@ -144,44 +166,57 @@ export interface GameData {
 }
 
 // ---------- Factory ----------
+// 5 color kits per team - 3v3 uses the first 3, 5v5 uses all 5
 const TEAM0 = [
   { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#c68642', hair: '#1c1917' },
   { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#f1c27d', hair: '#78350f' },
   { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#8d5524', hair: '#0c0a09' },
+  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#e0ac69', hair: '#292524' },
+  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#8d5524', hair: '#3f2c1a' },
 ]
 const TEAM1 = [
   { jersey: '#ef4444', shorts: '#b91c1c', skin: '#f1c27d', hair: '#facc15' },
   { jersey: '#ef4444', shorts: '#b91c1c', skin: '#8d5524', hair: '#1c1917' },
   { jersey: '#ef4444', shorts: '#b91c1c', skin: '#c68642', hair: '#44403c' },
+  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#e0ac69', hair: '#0c0a09' },
+  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#f1c27d', hair: '#57534e' },
 ]
 
 // Each player gets his own silhouette, hair, and gear so nobody looks
-// like a clone. Index = player id (0-2 team 0, 3-5 team 1).
-const LOOKS: PlayerLook[] = [
-  // Team 0 - blue
+// like a clone. Index = slot within the team (0-4).
+const LOOKS0: PlayerLook[] = [
   { h: 0.96, w: 0.94, hair: 'buzz', headband: true, sleeve: 'right', legSleeve: false, number: 1 },
   { h: 1.1, w: 1.12, hair: 'afro', headband: false, sleeve: 'none', legSleeve: true, number: 34 },
   { h: 1.02, w: 0.98, hair: 'hightop', headband: false, sleeve: 'left', legSleeve: false, number: 7 },
-  // Team 1 - red
+  { h: 0.98, w: 0.96, hair: 'curls', headband: false, sleeve: 'none', legSleeve: true, number: 11 },
+  { h: 1.14, w: 1.16, hair: 'flattop', headband: true, sleeve: 'left', legSleeve: false, number: 42 },
+]
+const LOOKS1: PlayerLook[] = [
   { h: 0.99, w: 0.96, hair: 'bun', headband: true, sleeve: 'none', legSleeve: false, number: 0 },
   { h: 1.12, w: 1.14, hair: 'flattop', headband: false, sleeve: 'none', legSleeve: true, number: 55 },
   { h: 0.94, w: 0.92, hair: 'curls', headband: false, sleeve: 'right', legSleeve: false, number: 23 },
+  { h: 1.04, w: 1.0, hair: 'buzz', headband: false, sleeve: 'left', legSleeve: false, number: 8 },
+  { h: 1.15, w: 1.18, hair: 'afro', headband: true, sleeve: 'none', legSleeve: true, number: 50 },
 ]
 
-// Matches LOOKS by id: the small guards are shooters, the bigs are rim
-// runners, the wings are balanced. Weights are relative, not percentages.
-const TENDENCIES: ShotTendency[] = [
-  // Team 0 - blue
+// Matches LOOKS by team slot: the small guards are shooters, the bigs are
+// rim runners, the wings are balanced. Weights are relative, not percentages.
+const TENDENCIES0: ShotTendency[] = [
   { three: 0.45, mid: 0.3, drive: 0.25 }, // #1  sharpshooting guard
   { three: 0.1, mid: 0.2, drive: 0.7 }, // #34 big man - lives at the rim
   { three: 0.3, mid: 0.4, drive: 0.3 }, // #7  mid-range wing
-  // Team 1 - red
+  { three: 0.4, mid: 0.35, drive: 0.25 }, // #11 combo guard
+  { three: 0.05, mid: 0.15, drive: 0.8 }, // #42 center - rim runner
+]
+const TENDENCIES1: ShotTendency[] = [
   { three: 0.5, mid: 0.25, drive: 0.25 }, // #0  deep-range gunner
   { three: 0.08, mid: 0.22, drive: 0.7 }, // #55 bruiser - dunks only
   { three: 0.35, mid: 0.35, drive: 0.3 }, // #23 smooth all-around scorer
+  { three: 0.42, mid: 0.3, drive: 0.28 }, // #8  streaky shooter
+  { three: 0.05, mid: 0.18, drive: 0.77 }, // #50 paint monster
 ]
 
-function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
+function makePlayer(id: number, team: 0 | 1, slot: number, x: number, z: number): PlayerData {
   return {
     id,
     team,
@@ -212,24 +247,44 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     helpDef: false,
     screenedT: 0,
     trailing: false,
-    colors: team === 0 ? TEAM0[id % 3] : TEAM1[id % 3],
-    look: LOOKS[id % LOOKS.length],
-    tendency: TENDENCIES[id % TENDENCIES.length],
+    colors: team === 0 ? TEAM0[slot % 5] : TEAM1[slot % 5],
+    look: team === 0 ? LOOKS0[slot % 5] : LOOKS1[slot % 5],
+    tendency: team === 0 ? TENDENCIES0[slot % 5] : TENDENCIES1[slot % 5],
     aiPlan: 'probe',
     aiPlanFresh: false,
   }
 }
 
-export function createGame(): GameData {
-  const players = [
-    makePlayer(0, 0, 0, 2.5),
-    makePlayer(1, 0, -5.5, -2),
-    makePlayer(2, 0, 5.5, -2),
-    makePlayer(3, 1, 0, 0.8),
-    makePlayer(4, 1, -4.2, -4),
-    makePlayer(5, 1, 4.2, -4),
-  ]
+export function createGame(mode: GameMode = '3v3'): GameData {
+  const players =
+    mode === '3v3'
+      ? [
+          makePlayer(0, 0, 0, 0, 2.5),
+          makePlayer(1, 0, 1, -5.5, -2),
+          makePlayer(2, 0, 2, 5.5, -2),
+          makePlayer(3, 1, 0, 0, 0.8),
+          makePlayer(4, 1, 1, -4.2, -4),
+          makePlayer(5, 1, 2, 4.2, -4),
+        ]
+      : [
+          // Team 0 (blue) attacks the -z rim, starts on the +z half
+          makePlayer(0, 0, 0, 0, 1.5),
+          makePlayer(1, 0, 1, -5.5, 3.5),
+          makePlayer(2, 0, 2, 5.5, 3.5),
+          makePlayer(3, 0, 3, -2.8, 6),
+          makePlayer(4, 0, 4, 2.8, 6),
+          // Team 1 (red) attacks the +z rim, defends the -z half first
+          makePlayer(5, 1, 0, 0, -1),
+          makePlayer(6, 1, 1, -4.5, -3.5),
+          makePlayer(7, 1, 2, 4.5, -3.5),
+          makePlayer(8, 1, 3, -2.2, -6),
+          makePlayer(9, 1, 4, 2.2, -6),
+        ]
+  const bounds = mode === '3v3' ? COURT_3V3 : COURT_5V5
+  Object.assign(COURT, bounds)
   return {
+    mode,
+    perTeam: mode === '3v3' ? 3 : 5,
     players,
     ball: {
       pos: new THREE.Vector3(0, 1, 2.5),
@@ -273,14 +328,29 @@ if (typeof window !== 'undefined') {
   ;(window as unknown as Record<string, unknown>).__G = G
 }
 
-export function distToRim(p: THREE.Vector3) {
-  const dx = p.x - RIM_GROUND.x
-  const dz = p.z - RIM_GROUND.z
+// Rebuild the singleton in place for a new mode (references to G stay valid)
+export function setGameMode(mode: GameMode) {
+  const fresh = createGame(mode)
+  Object.assign(G, fresh)
+}
+
+// Rim helpers bound to the live game mode. `team` is the ATTACKING team.
+export function rimOf(team: 0 | 1) {
+  return attackRim(G.mode, team)
+}
+export function rimGroundOf(team: 0 | 1) {
+  return attackRimGround(G.mode, team)
+}
+
+export function distToRim(p: THREE.Vector3, team: 0 | 1 = 0) {
+  const rg = rimGroundOf(team)
+  const dx = p.x - rg.x
+  const dz = p.z - rg.z
   return Math.sqrt(dx * dx + dz * dz)
 }
 
-export function isThree(p: THREE.Vector3) {
-  return distToRim(p) > THREE_PT_RADIUS
+export function isThree(p: THREE.Vector3, team: 0 | 1 = 0) {
+  return distToRim(p, team) > THREE_PT_RADIUS
 }
 
 // ---------- HUD store (synced from the loop at low frequency) ----------
@@ -294,6 +364,7 @@ interface HudState {
   over: boolean
   winner: 0 | 1
   started: boolean
+  mode: GameMode
   setHud: (p: Partial<HudState>) => void
 }
 
@@ -307,5 +378,6 @@ export const useHud = create<HudState>((set) => ({
   over: false,
   winner: 0,
   started: false,
+  mode: '3v3',
   setHud: (p) => set(p),
 }))
