@@ -1,6 +1,6 @@
 'use client'
 
-import { useHud } from '@/lib/game'
+import { setGameMode, useHud, type GameMode } from '@/lib/game'
 
 export default function Hud() {
   const {
@@ -13,8 +13,14 @@ export default function Hud() {
     over,
     winner,
     started,
+    mode,
     setHud,
   } = useHud()
+
+  function startGame(m: GameMode) {
+    setGameMode(m)
+    setHud({ started: true, mode: m, scores: [0, 0], over: false })
+  }
 
   return (
     <div className="pointer-events-none absolute inset-0 select-none">
@@ -30,7 +36,7 @@ export default function Hud() {
           <span className="min-w-6 text-right text-foreground">{scores[0]}</span>
         </div>
         <div className="flex items-center border-y-4 border-muted bg-background/80 px-3 text-[10px] text-muted-foreground">
-          FIRST TO 21
+          {mode === '5v5' ? '5V5 - TO 21' : '3V3 - TO 21'}
         </div>
         <div
           className={`flex items-center gap-2 border-4 bg-muted/90 px-4 py-2 text-danger ${
@@ -115,20 +121,35 @@ export default function Hud() {
           <h1 className="text-3xl text-primary md:text-5xl [text-shadow:4px_4px_0_#1e293b]">
             PIXEL HOOPS
           </h1>
-          <p className="text-sm text-accent md:text-lg">3 ON 3 STREETBALL</p>
+          <p className="text-sm text-accent md:text-lg">PICK YOUR GAME</p>
           <div className="flex max-w-md flex-col gap-2 text-[10px] leading-relaxed text-muted-foreground md:text-xs">
             <p>FIRST TO 21 WINS. 2 PTS INSIDE, 3 PTS BEYOND THE ARC.</p>
             <p>HOLD SPACE TO JUMP SHOT - RELEASE IN THE GREEN ZONE.</p>
             <p>SPRINT TO THE RIM + SPACE = DUNK.</p>
             <p>ON DEFENSE: E SWITCHES PLAYERS, Q POKES THE BALL, SPACE BLOCKS.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setHud({ started: true })}
-            className="border-4 border-primary bg-primary px-8 py-4 text-sm text-primary-foreground shadow-[6px_6px_0_#7c2d12] transition-transform hover:scale-105 md:text-base"
-          >
-            PLAY
-          </button>
+          <div className="flex flex-col items-center gap-4 md:flex-row">
+            <button
+              type="button"
+              onClick={() => startGame('3v3')}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-primary bg-primary px-6 py-4 text-primary-foreground shadow-[6px_6px_0_#7c2d12] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">3 ON 3</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                STREETBALL - HALF COURT
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => startGame('5v5')}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-accent bg-accent px-6 py-4 text-accent-foreground shadow-[6px_6px_0_#1e3a8a] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">5 ON 5</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                FULL COURT - TWO BASKETS
+              </span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -148,6 +169,13 @@ export default function Hud() {
           <p className="text-xs text-muted-foreground md:text-sm">
             PRESS ENTER TO PLAY AGAIN
           </p>
+          <button
+            type="button"
+            onClick={() => setHud({ started: false, over: false })}
+            className="border-4 border-muted bg-muted px-6 py-3 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105 md:text-sm"
+          >
+            MAIN MENU
+          </button>
         </div>
       )}
     </div>

@@ -6,8 +6,14 @@ import PlayerMesh from './player-mesh'
 import BallMesh from './ball-mesh'
 import GameLoop from './game-loop'
 import Hud from './hud'
+import { useHud } from '@/lib/game'
 
 export default function PixelBasketball() {
+  const mode = useHud((s) => s.mode)
+  const playerIds = Array.from(
+    { length: mode === '5v5' ? 10 : 6 },
+    (_, i) => i,
+  )
   return (
     <div className="relative h-screen w-full">
       <Canvas
@@ -52,12 +58,17 @@ export default function PixelBasketball() {
         />
         {/* Rim spotlight glow */}
         <pointLight position={[0, 5, -9.4]} intensity={14} color="#ffedd5" distance={9} />
-        {/* Warm court wash from the far side */}
-        <pointLight position={[0, 4, 4]} intensity={5} color="#fde8c8" distance={14} />
+        {mode === '5v5' ? (
+          // Second basket glow on the full court
+          <pointLight position={[0, 5, 9.4]} intensity={14} color="#ffedd5" distance={9} />
+        ) : (
+          // Warm court wash from the open half-court side
+          <pointLight position={[0, 4, 4]} intensity={5} color="#fde8c8" distance={14} />
+        )}
 
-        <Court />
-        {[0, 1, 2, 3, 4, 5].map((id) => (
-          <PlayerMesh key={id} id={id} />
+        <Court key={mode} mode={mode} />
+        {playerIds.map((id) => (
+          <PlayerMesh key={`${mode}-${id}`} id={id} />
         ))}
         <BallMesh />
         <GameLoop />

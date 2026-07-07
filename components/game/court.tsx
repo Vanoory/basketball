@@ -3,7 +3,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { RIM } from '@/lib/game'
+import { RIM, type GameMode } from '@/lib/game'
 
 const LINE_COLOR = '#f8fafc'
 const LINE_Y = 0.02
@@ -43,7 +43,50 @@ function Line({
   )
 }
 
-export default function Court() {
+// One basket's worth of markings: key, FT circle, arc, corners, hoop.
+// Built around the -z rim; mirror with a 180-degree Y rotation for the
+// opposite basket on the full court.
+function EndMarkings() {
+  return (
+    <group>
+      {/* Painted key */}
+      <mesh position={[0, 0.01, -8.1]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[3.6, 5.6]} />
+        <meshLambertMaterial color="#b91c1c" />
+      </mesh>
+
+      {/* Key outline */}
+      <Line x={-1.8} z={-8.1} w={0.1} d={5.6} />
+      <Line x={1.8} z={-8.1} w={0.1} d={5.6} />
+      <Line x={0} z={-5.3} w={3.7} d={0.1} />
+
+      {/* Free-throw circle */}
+      <mesh position={[0, LINE_Y, -5.3]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.7, 1.8, 32]} />
+        <meshBasicMaterial color={LINE_COLOR} />
+      </mesh>
+
+      {/* 3-point arc (opens toward the court) */}
+      <mesh position={[0, LINE_Y, -9.4]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[6.5, 6.62, 48, 1, Math.PI, Math.PI]} />
+        <meshBasicMaterial color={LINE_COLOR} />
+      </mesh>
+      {/* Corner three lines */}
+      <Line x={-6.56} z={-10.15} w={0.12} d={2.7} />
+      <Line x={6.56} z={-10.15} w={0.12} d={2.7} />
+
+      <Hoop />
+    </group>
+  )
+}
+
+export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
+  const full = mode === '5v5'
+  // Floor footprint: half court is offset toward -z, full court is centered
+  const floorLen = full ? 23.2 : 16.4
+  const floorZ = full ? 0 : -3.4
+  const seams = full ? [-9, -5.5, -2, 1.5, 5, 8.5] : [-9, -5.5, -2, 1.5]
+
   return (
     <group>
       {/* Asphalt around */}
@@ -57,8 +100,8 @@ export default function Court() {
       </mesh>
 
       {/* Court apron (colored border band) */}
-      <mesh position={[0, -0.01, -3.4]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[20.5, 19.6]} />
+      <mesh position={[0, -0.01, floorZ]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[20.5, floorLen + 3.2]} />
         <meshLambertMaterial color="#14532d" />
       </mesh>
 
@@ -66,16 +109,16 @@ export default function Court() {
       {PLANK_TONES.map((tone, i) => (
         <mesh
           key={i}
-          position={[-8.25 + i * 1.5 + 0.75, 0, -3.4]}
+          position={[-8.25 + i * 1.5 + 0.75, 0, floorZ]}
           rotation={[-Math.PI / 2, 0, 0]}
           receiveShadow
         >
-          <planeGeometry args={[1.5, 16.4]} />
+          <planeGeometry args={[1.5, floorLen]} />
           <meshLambertMaterial color={tone} />
         </mesh>
       ))}
       {/* Plank seams (horizontal breaks for a real parquet feel) */}
-      {[-9, -5.5, -2, 1.5].map((z, i) => (
+      {seams.map((z, i) => (
         <mesh
           key={`seam${i}`}
           position={[0, 0.005, z]}
@@ -86,63 +129,86 @@ export default function Court() {
         </mesh>
       ))}
 
-      {/* Painted key */}
-      <mesh position={[0, 0.01, -8.1]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[3.6, 5.6]} />
-        <meshLambertMaterial color="#b91c1c" />
-      </mesh>
+      {full ? (
+        <>
+          {/* Midcourt line + full center circle */}
+          <Line x={0} z={0} w={17} d={0.12} />
+          <mesh position={[0, LINE_Y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[1.7, 1.82, 32]} />
+            <meshBasicMaterial color={LINE_COLOR} />
+          </mesh>
+          <mesh position={[0, 0.011, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[1.7, 32]} />
+            <meshLambertMaterial color="#b91c1c" />
+          </mesh>
+          {/* Pixel basketball logo at center court */}
+          <mesh position={[0, 0.013, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.75, 10]} />
+            <meshBasicMaterial color="#f97316" />
+          </mesh>
+          <mesh position={[0, 0.014, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[1.45, 0.07]} />
+            <meshBasicMaterial color="#7c2d12" />
+          </mesh>
+          <mesh
+            position={[0, 0.014, 0]}
+            rotation={[-Math.PI / 2, 0, Math.PI / 2]}
+          >
+            <planeGeometry args={[1.45, 0.07]} />
+            <meshBasicMaterial color="#7c2d12" />
+          </mesh>
 
-      {/* Center circle (half court decoration at +z end) */}
-      <mesh position={[0, LINE_Y, 4.5]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1.7, 1.82, 32, 1, 0, Math.PI]} />
-        <meshBasicMaterial color={LINE_COLOR} />
-      </mesh>
-      <mesh position={[0, 0.011, 4.5]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[1.7, 32, 0, Math.PI]} />
-        <meshLambertMaterial color="#b91c1c" />
-      </mesh>
-      {/* Pixel basketball logo inside the center circle */}
-      <mesh position={[0, 0.013, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.75, 10]} />
-        <meshBasicMaterial color="#f97316" />
-      </mesh>
-      <mesh position={[0, 0.014, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[1.45, 0.07]} />
-        <meshBasicMaterial color="#7c2d12" />
-      </mesh>
-      <mesh position={[0, 0.014, 3.7]} rotation={[-Math.PI / 2, 0, Math.PI / 2]}>
-        <planeGeometry args={[1.45, 0.07]} />
-        <meshBasicMaterial color="#7c2d12" />
-      </mesh>
+          {/* Full-court boundary lines */}
+          <Line x={0} z={11.5} w={17} d={0.12} />
+          <Line x={0} z={-11.5} w={17} d={0.12} />
+          <Line x={-8.45} z={0} w={0.12} d={23.12} />
+          <Line x={8.45} z={0} w={0.12} d={23.12} />
 
-      {/* Court boundary lines */}
-      <Line x={0} z={4.5} w={17} d={0.12} />
-      <Line x={0} z={-11.5} w={17} d={0.12} />
-      <Line x={-8.45} z={-3.5} w={0.12} d={16.12} />
-      <Line x={8.45} z={-3.5} w={0.12} d={16.12} />
+          {/* Both ends: markings + hoops */}
+          <EndMarkings />
+          <group rotation={[0, Math.PI, 0]}>
+            <EndMarkings />
+          </group>
+        </>
+      ) : (
+        <>
+          {/* Center circle (half court decoration at +z end) */}
+          <mesh position={[0, LINE_Y, 4.5]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[1.7, 1.82, 32, 1, 0, Math.PI]} />
+            <meshBasicMaterial color={LINE_COLOR} />
+          </mesh>
+          <mesh position={[0, 0.011, 4.5]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[1.7, 32, 0, Math.PI]} />
+            <meshLambertMaterial color="#b91c1c" />
+          </mesh>
+          {/* Pixel basketball logo inside the center circle */}
+          <mesh position={[0, 0.013, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.75, 10]} />
+            <meshBasicMaterial color="#f97316" />
+          </mesh>
+          <mesh position={[0, 0.014, 3.7]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[1.45, 0.07]} />
+            <meshBasicMaterial color="#7c2d12" />
+          </mesh>
+          <mesh
+            position={[0, 0.014, 3.7]}
+            rotation={[-Math.PI / 2, 0, Math.PI / 2]}
+          >
+            <planeGeometry args={[1.45, 0.07]} />
+            <meshBasicMaterial color="#7c2d12" />
+          </mesh>
 
-      {/* Key outline */}
-      <Line x={-1.8} z={-8.1} w={0.1} d={5.6} />
-      <Line x={1.8} z={-8.1} w={0.1} d={5.6} />
-      <Line x={0} z={-5.3} w={3.7} d={0.1} />
+          {/* Court boundary lines */}
+          <Line x={0} z={4.5} w={17} d={0.12} />
+          <Line x={0} z={-11.5} w={17} d={0.12} />
+          <Line x={-8.45} z={-3.5} w={0.12} d={16.12} />
+          <Line x={8.45} z={-3.5} w={0.12} d={16.12} />
 
-      {/* Free-throw circle */}
-      <mesh position={[0, LINE_Y, -5.3]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1.7, 1.8, 32]} />
-        <meshBasicMaterial color={LINE_COLOR} />
-      </mesh>
+          <EndMarkings />
+        </>
+      )}
 
-      {/* 3-point arc (opens toward +z / the court) */}
-      <mesh position={[0, LINE_Y, -9.4]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[6.5, 6.62, 48, 1, Math.PI, Math.PI]} />
-        <meshBasicMaterial color={LINE_COLOR} />
-      </mesh>
-      {/* Corner three lines */}
-      <Line x={-6.56} z={-10.15} w={0.12} d={2.7} />
-      <Line x={6.56} z={-10.15} w={0.12} d={2.7} />
-
-      <Hoop />
-      <Environment />
+      <Environment full={full} />
     </group>
   )
 }
@@ -461,22 +527,38 @@ function Bench({ x, z, rot = 0 }: { x: number; z: number; rot?: number }) {
   )
 }
 
-function Environment() {
+function Environment({ full = false }: { full?: boolean }) {
+  // On the full court everything on the +z side moves out past the second
+  // basket so nothing sits on the playing surface.
+  const zOff = full ? 4.5 : 0
   return (
     <group>
       {/* Bleachers with animated crowd on both sides */}
-      <Crowd position={[-12.5, 0, -3.5]} rotation={Math.PI / 2} rows={3} cols={16} />
-      <Crowd position={[12.5, 0, -3.5]} rotation={-Math.PI / 2} rows={3} cols={16} />
+      <Crowd
+        position={[-12.5, 0, full ? 0 : -3.5]}
+        rotation={Math.PI / 2}
+        rows={3}
+        cols={full ? 22 : 16}
+      />
+      <Crowd
+        position={[12.5, 0, full ? 0 : -3.5]}
+        rotation={-Math.PI / 2}
+        rows={3}
+        cols={full ? 22 : 16}
+      />
       <Crowd position={[0, 0, -15.5]} rotation={0} rows={2} cols={18} />
+      {full && (
+        <Crowd position={[0, 0, 15.5]} rotation={Math.PI} rows={2} cols={18} />
+      )}
 
       {/* Chain-link fence behind the court */}
       {Array.from({ length: 13 }).map((_, i) => (
-        <mesh key={`fp${i}`} position={[-18 + i * 3, 1.6, 9]}>
+        <mesh key={`fp${i}`} position={[-18 + i * 3, 1.6, 9 + zOff]}>
           <boxGeometry args={[0.12, 3.2, 0.12]} />
           <meshLambertMaterial color="#64748b" />
         </mesh>
       ))}
-      <mesh position={[0, 1.6, 9.05]}>
+      <mesh position={[0, 1.6, 9.05 + zOff]}>
         <planeGeometry args={[36, 3]} />
         <meshBasicMaterial
           color="#94a3b8"
@@ -486,7 +568,7 @@ function Environment() {
         />
       </mesh>
       {/* Fence top rail */}
-      <mesh position={[0, 3.25, 9]}>
+      <mesh position={[0, 3.25, 9 + zOff]}>
         <boxGeometry args={[36, 0.12, 0.12]} />
         <meshLambertMaterial color="#64748b" />
       </mesh>
@@ -547,7 +629,7 @@ function Environment() {
 
       {/* Sideline benches with pixel water coolers */}
       {[-1, 1].map((s) => (
-        <group key={`bench${s}`} position={[s * 6, 0, 6.6]}>
+        <group key={`bench${s}`} position={[s * 6, 0, 6.6 + zOff]}>
           <mesh position={[0, 0.35, 0]}>
             <boxGeometry args={[3.2, 0.12, 0.6]} />
             <meshLambertMaterial color="#7c5a3a" />
@@ -572,7 +654,7 @@ function Environment() {
         { x: 3, c: '#15803d', t: '#86efac' },
         { x: 9, c: '#a16207', t: '#fde047' },
       ].map((ad, i) => (
-        <group key={`ad${i}`} position={[ad.x, 1.1, 8.95]}>
+        <group key={`ad${i}`} position={[ad.x, 1.1, 8.95 + zOff]}>
           <mesh>
             <planeGeometry args={[4.5, 1.1]} />
             <meshLambertMaterial color={ad.c} side={THREE.DoubleSide} />
@@ -643,8 +725,8 @@ function Environment() {
       <Bench x={10.6} z={-8.5} rot={-Math.PI / 2} />
 
       {/* Floodlights on the corners */}
-      <Floodlight x={-11} z={6} />
-      <Floodlight x={11} z={6} />
+      <Floodlight x={-11} z={6 + zOff * 1.6} />
+      <Floodlight x={11} z={6 + zOff * 1.6} />
       <Floodlight x={-11} z={-13} />
       <Floodlight x={11} z={-13} />
     </group>
