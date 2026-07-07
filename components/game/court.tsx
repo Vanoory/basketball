@@ -663,10 +663,10 @@ function Environment({ full = false }: { full?: boolean }) {
         <Crowd position={[0, 0, 18]} rotation={Math.PI} rows={2} cols={18} />
       )}
 
-      {/* String lights over the court - streetball night-game vibe */}
-      <StringLights z={full ? -7 : -6.5} width={full ? 27 : 24} />
-      <StringLights z={full ? 7 : 2.5} width={full ? 27 : 24} />
-      {full && <StringLights z={0} width={27} />}
+      {/* String lights over the ends of the court - streetball night vibe.
+          Kept off midcourt so the cables never cut across the broadcast cam. */}
+      <StringLights z={full ? -15.5 : -6.5} width={full ? 27 : 24} />
+      <StringLights z={full ? 15.5 : 2.5} width={full ? 27 : 24} />
 
       {/* Chain-link fence behind the court */}
       {Array.from({ length: 13 }).map((_, i) => (
