@@ -432,6 +432,10 @@ interface HudState {
   mode: GameMode
   map: MapId
   paintVersion: number
+  // Online friend mode: mp = playing over the network, myTeam = which team
+  // this client controls (host = 0, guest = 1)
+  mp: boolean
+  myTeam: 0 | 1
   setHud: (p: Partial<HudState>) => void
 }
 
@@ -448,5 +452,7 @@ export const useHud = create<HudState>((set) => ({
   mode: '3v3',
   map: 'city',
   paintVersion: 0,
+  mp: false,
+  myTeam: 0,
   setHud: (p) => set(p),
 }))

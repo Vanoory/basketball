@@ -25,6 +25,14 @@ import {
   type AIPlan,
 } from '@/lib/game'
 import { INPUT } from '@/lib/input'
+import {
+  MP,
+  sendSnapshot,
+  queueMpAction,
+  ANIMS,
+  BALL_STATES,
+  type Snapshot,
+} from '@/lib/multiplayer'
 
 const V = new THREE.Vector3()
 const V2 = new THREE.Vector3()
@@ -683,6 +691,9 @@ export default function GameLoop() {
   const padPrev = useRef<boolean[]>([])
   const padMove = useRef({ x: 0, z: 0 })
   const padSprint = useRef(false)
+  // Online friend mode: host-side guest steal cooldown + snapshot pacing
+  const guestStealCd = useRef(0)
+  const snapAcc = useRef(0)
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -720,6 +731,11 @@ export default function GameLoop() {
   }, [])
 
   function restart() {
+    // Online guest: ask the host to restart - the host owns the simulation
+    if (MP.role === 'guest') {
+      queueMpAction('restart')
+      return
+    }
     G.scores = [0, 0]
     G.phase = 'reset'
     G.phaseT = 0.5
@@ -728,6 +744,11 @@ export default function GameLoop() {
   }
 
   function onSpaceDown() {
+    // Online guest: relay the action to the host
+    if (MP.role === 'guest') {
+      queueMpAction('shootDown')
+      return
+    }
     if (G.phase !== 'play') return
     const me = G.players[G.controlled]
     if (me.stunT > 0) return
@@ -785,6 +806,10 @@ export default function GameLoop() {
   }
 
   function onSpaceUp() {
+    if (MP.role === 'guest') {
+      queueMpAction('shootUp')
+      return
+    }
     if (!G.meterActive || G.phase !== 'play') return
     releaseUserShot()
   }
@@ -812,6 +837,10 @@ export default function GameLoop() {
   }
 
   function onPassOrSwitch() {
+    if (MP.role === 'guest') {
+      queueMpAction('pass')
+      return
+    }
     if (G.phase !== 'play') return
     const me = G.players[G.controlled]
     const b = G.ball
@@ -824,6 +853,10 @@ export default function GameLoop() {
   }
 
   function onSteal() {
+    if (MP.role === 'guest') {
+      queueMpAction('steal')
+      return
+    }
     if (G.phase !== 'play' || stealCooldown.current > 0) return
     const me = G.players[G.controlled]
     if (me.stunT > 0) return
@@ -919,6 +952,17 @@ export default function GameLoop() {
     const dt = Math.min(rawDt, 0.05)
     pollGamepad()
     consumeInputQueue()
+
+    // ONLINE GUEST: no local simulation - stream input to the host, render
+    // the host's snapshots, and run only the camera + HUD locally.
+    if (MP.role === 'guest') {
+      G.time += dt
+      guestFrame(dt)
+      updateCamera(dt)
+      syncHud()
+      return
+    }
+
     G.time += dt
     if (G.messageT > 0) G.messageT -= dt
     if (stealCooldown.current > 0) stealCooldown.current -= dt
@@ -961,8 +1005,17 @@ export default function GameLoop() {
       }
     }
 
+    // ONLINE HOST: apply the friend's queued actions + keep his controlled
+    // player assignment in sync with the ball
+    if (MP.role === 'host') {
+      if (guestStealCd.current > 0) guestStealCd.current -= dt
+      syncGuestControlled()
+      consumeGuestQueue()
+    }
+
     if (G.phase === 'play') {
       updateControlledPlayer(dt)
+      if (MP.role === 'host') updateGuestPlayer(dt)
       updateAI(dt)
       for (const p of G.players) {
         if (p.dunking) updateDunk(p, dt)
@@ -1004,6 +1057,24 @@ export default function GameLoop() {
       if (G.meterValue >= 1) {
         G.meterValue = 1
         releaseUserShot()
+      }
+    }
+
+    // ONLINE HOST: fill the guest's meter and broadcast snapshots ~20x/sec
+    if (MP.role === 'host') {
+      if (MP.guestMeter.active) {
+        MP.guestMeter.value += dt / METER_FILL_TIME
+        if (MP.guestMeter.value >= 1) {
+          MP.guestMeter.value = 1
+          releaseGuestShot()
+        }
+      }
+      if (MP.peerConnected) {
+        snapAcc.current += dt
+        if (snapAcc.current >= 0.05) {
+          snapAcc.current = 0
+          sendSnapshot(buildSnapshot())
+        }
       }
     }
 
@@ -1108,6 +1179,380 @@ export default function GameLoop() {
       }
     }
   }
+
+  // ================= ONLINE FRIEND MODE =================
+
+  // HOST: keep the guest bound to the right team-1 player. When team 1 has
+  // the ball, the guest always controls the handler (mirrors how the local
+  // player auto-controls the handler on team 0).
+  function syncGuestControlled() {
+    const b = G.ball
+    if (
+      b.state === 'held' &&
+      b.holder >= 0 &&
+      G.players[b.holder]?.team === 1
+    ) {
+      MP.guestControlled = b.holder
+    } else if (
+      MP.guestControlled < 0 ||
+      !G.players[MP.guestControlled] ||
+      G.players[MP.guestControlled].team !== 1
+    ) {
+      MP.guestControlled = G.perTeam // first team-1 slot
+    }
+  }
+
+  // HOST: run the guest's one-shot actions against the simulation
+  function consumeGuestQueue() {
+    for (const a of MP.guestInput.queue) {
+      if (a === 'shootDown') guestSpaceDown()
+      else if (a === 'shootUp') guestSpaceUp()
+      else if (a === 'pass') guestPassOrSwitch()
+      else if (a === 'steal') guestSteal()
+      else if (a === 'restart' && G.phase === 'over') restart()
+    }
+    MP.guestInput.queue.length = 0
+  }
+
+  // HOST: move the guest's player from his streamed WORLD-space input.
+  // Mirrors updateControlledPlayer minus the camera-relative conversion
+  // (the guest already converted using his own camera).
+  function updateGuestPlayer(dt: number) {
+    if (MP.guestControlled < 0) return
+    const me = G.players[MP.guestControlled]
+    if (!me || me.dunking || me.stunT > 0) return
+    if (me.stumbleT > 0) {
+      applyMove(me, 0, 0, 0, 14, dt)
+      return
+    }
+    const b = G.ball
+    const shooting = me.anim === 'shoot' && !me.grounded
+
+    let mx = MP.guestInput.mx
+    let mz = MP.guestInput.mz
+    const mLen = Math.hypot(mx, mz)
+    if (mLen > 1) {
+      mx /= mLen
+      mz /= mLen
+    } else if (mLen < 0.12) {
+      mx = 0
+      mz = 0
+    }
+
+    const hasBall = b.state === 'held' && b.holder === me.id
+    const defending = G.possession !== me.team
+
+    if (!shooting && (mx !== 0 || mz !== 0)) {
+      const len = Math.hypot(mx, mz)
+      mx /= len
+      mz /= len
+      if (hasBall) tryAnkleBreak(me, mx, mz)
+      const sprint = MP.guestInput.sprint
+      const modeBoost = G.mode === '5v5' ? 1.12 : 1
+      const speed =
+        (sprint ? (hasBall ? 6.4 : defending ? 7.4 : 7) : defending ? 5.2 : 4.6) *
+        modeBoost
+      applyMove(me, mx, mz, speed, defending ? 15 : 12, dt)
+      if (me.grounded) me.anim = 'run'
+      if (defending && b.holder >= 0 && me.grounded) {
+        const h = G.players[b.holder]
+        if (h.pos.distanceTo(me.pos) < 4.5) {
+          me.facing = Math.atan2(h.pos.x - me.pos.x, h.pos.z - me.pos.z)
+          if (me.speed < 3.6 && me.anim === 'run') me.anim = 'shuffle'
+        }
+      }
+    } else if (!shooting) {
+      applyMove(me, 0, 0, 0, 16, dt)
+      if (me.grounded && me.anim === 'run') me.anim = 'idle'
+      if (hasBall) {
+        const rg = rimGroundOf(me.team)
+        me.facing = Math.atan2(rg.x - me.pos.x, rg.z - me.pos.z)
+      } else if (defending && b.holder >= 0) {
+        const h = G.players[b.holder]
+        if (h.pos.distanceTo(me.pos) < 6) {
+          me.facing = Math.atan2(h.pos.x - me.pos.x, h.pos.z - me.pos.z)
+          if (me.grounded && h.pos.distanceTo(me.pos) < 2.8) me.anim = 'shuffle'
+        }
+      }
+    }
+  }
+
+  // HOST: guest pressed shoot - dunk / meter shot / defensive jump
+  function guestSpaceDown() {
+    if (G.phase !== 'play' || MP.guestControlled < 0) return
+    const me = G.players[MP.guestControlled]
+    if (!me || me.stunT > 0) return
+    const b = G.ball
+
+    if (b.state === 'held' && b.holder === me.id) {
+      if (G.mustClear && !isThree(me.pos, me.team)) return
+      const d = distToRim(me.pos, me.team)
+      if (d < 2.7) {
+        startDunk(me)
+      } else {
+        const moveSpeed = me.speed
+        beginShotRise(me)
+        MP.guestMeter.active = true
+        MP.guestMeter.value = 0
+        const contest = Math.max(0, 1.6 - nearestOpponentDist(me)) / 1.6
+        const styleMod =
+          me.shotStyle === 1 ? -0.018 : me.shotStyle === 2 ? 0.012 : 0
+        const contestMod = me.shotStyle === 1 ? 0.55 : 1
+        const half = Math.max(
+          0.022,
+          0.115 -
+            d * 0.005 -
+            contest * 0.04 * contestMod -
+            moveSpeed * 0.0085 +
+            styleMod,
+        )
+        MP.guestMeter.window = [
+          METER_PERFECT_CENTER - half,
+          METER_PERFECT_CENTER + half,
+        ]
+      }
+      return
+    }
+
+    if (G.possession !== me.team && me.grounded && !me.dunking) {
+      me.vy = 7.2
+      me.grounded = false
+      me.anim = 'block'
+      me.animT = 0
+    }
+  }
+
+  function guestSpaceUp() {
+    if (!MP.guestMeter.active || G.phase !== 'play') return
+    releaseGuestShot()
+  }
+
+  function releaseGuestShot() {
+    MP.guestMeter.active = false
+    if (MP.guestControlled < 0) return
+    const me = G.players[MP.guestControlled]
+    if (!me || G.ball.holder !== me.id) return
+    const v = MP.guestMeter.value
+    const [lo, hi] = MP.guestMeter.window
+    const center = (lo + hi) / 2
+    const half = (hi - lo) / 2
+    const err = Math.max(0, Math.abs(v - center) - half)
+    const contest = Math.max(0, 1.6 - nearestOpponentDist(me)) / 1.6
+    let willScore: boolean
+    if (err <= 0) {
+      willScore = true
+      setMessage('PERFECT RELEASE!', 1.2)
+    } else {
+      const p = Math.max(0.03, 0.7 - err * 5.5 - contest * 0.35)
+      willScore = Math.random() < p
+    }
+    const pts = isThree(me.pos, me.team) ? 3 : 2
+    launchShot(me, willScore, pts)
+  }
+
+  function guestPassOrSwitch() {
+    if (G.phase !== 'play' || MP.guestControlled < 0) return
+    const me = G.players[MP.guestControlled]
+    if (!me) return
+    const b = G.ball
+    if (b.state === 'held' && b.holder === me.id && !MP.guestMeter.active) {
+      tryPass(me)
+    } else if (G.possession !== me.team) {
+      const handler = b.holder >= 0 ? G.players[b.holder].pos : b.pos
+      MP.guestControlled = nearestOf(me.team, handler)
+    }
+  }
+
+  function guestSteal() {
+    if (G.phase !== 'play' || guestStealCd.current > 0) return
+    if (MP.guestControlled < 0) return
+    const me = G.players[MP.guestControlled]
+    if (!me || me.stunT > 0) return
+    const b = G.ball
+    if (G.possession === me.team) return
+    guestStealCd.current = 0.75
+    me.anim = 'steal'
+    me.animT = 0
+    if (
+      b.state === 'pass' &&
+      b.pos.distanceTo(me.pos) < 1.6 &&
+      Math.random() < 0.5
+    ) {
+      b.state = 'loose'
+      b.holder = -1
+      b.vel.set((Math.random() - 0.5) * 4, 2.2, (Math.random() - 0.5) * 4)
+      setMessage('DEFLECTED!', 1.3)
+      return
+    }
+    if (b.state === 'held' && b.holder >= 0) {
+      const h = G.players[b.holder]
+      if (h.pos.distanceTo(me.pos) < 1.6 && !h.dunking) {
+        const toMe = V2.copy(me.pos).sub(h.pos).setY(0).normalize()
+        const fwd = V3.set(Math.sin(h.facing), 0, Math.cos(h.facing))
+        const behind = toMe.dot(fwd) < 0.2
+        if (Math.random() < (behind ? 0.42 : 0.3)) {
+          b.state = 'loose'
+          b.holder = -1
+          b.pos.set(h.pos.x, 1, h.pos.z)
+          V.copy(me.pos).sub(h.pos).normalize()
+          b.vel.set(V.x * 3 + (Math.random() - 0.5) * 2, 2, V.z * 3)
+          setMessage('STEAL!', 1.5)
+        }
+      }
+    }
+  }
+
+  // HOST: pack the whole visible game state into a compact snapshot
+  function buildSnapshot(): Snapshot {
+    const b = G.ball
+    return {
+      p: G.players.map((pl) => [
+        pl.pos.x,
+        pl.pos.y,
+        pl.pos.z,
+        pl.facing,
+        Math.max(0, ANIMS.indexOf(pl.anim)),
+        pl.animT,
+        pl.speed,
+        pl.shotStyle,
+        pl.dunkStyle,
+        pl.dunkT,
+        pl.stunT,
+        pl.stumbleT,
+        pl.crossLean,
+        pl.grounded ? 1 : 0,
+        pl.celebrateT,
+      ]),
+      b: [
+        b.pos.x,
+        b.pos.y,
+        b.pos.z,
+        b.vel.x,
+        b.vel.y,
+        b.vel.z,
+        Math.max(0, BALL_STATES.indexOf(b.state)),
+        b.holder,
+        b.spin,
+      ],
+      s: [G.scores[0], G.scores[1]],
+      pos: G.possession,
+      ph: G.phase === 'play' ? 0 : G.phase === 'reset' ? 1 : 2,
+      ctrl: MP.guestControlled,
+      msg: G.message,
+      msgT: G.messageT,
+      mc: G.mustClear,
+      gm: [
+        MP.guestMeter.active ? 1 : 0,
+        MP.guestMeter.value,
+        MP.guestMeter.window[0],
+        MP.guestMeter.window[1],
+      ],
+    }
+  }
+
+  // GUEST: send movement input + apply the latest host snapshot
+  function guestFrame(dt: number) {
+    // ----- Outgoing input: WASD/touch/pad converted to WORLD space using
+    // the guest's own camera (same convention as the local player) -----
+    let mx = 0
+    let mz = 0
+    const k = keys.current
+    if (k.has('KeyW') || k.has('ArrowUp')) mz -= 1
+    if (k.has('KeyS') || k.has('ArrowDown')) mz += 1
+    if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1
+    if (k.has('KeyD') || k.has('ArrowRight')) mx += 1
+    mx += INPUT.moveX + padMove.current.x
+    mz += INPUT.moveZ + padMove.current.z
+    const mLen = Math.hypot(mx, mz)
+    if (mLen > 1) {
+      mx /= mLen
+      mz /= mLen
+    } else if (mLen < 0.12) {
+      mx = 0
+      mz = 0
+    }
+    if (mx !== 0 || mz !== 0) {
+      let cfx = G.camLook.x - G.camPos.x
+      let cfz = G.camLook.z - G.camPos.z
+      const cfl = Math.hypot(cfx, cfz)
+      if (cfl > 0.0001) {
+        cfx /= cfl
+        cfz /= cfl
+        const wx = cfx * -mz + -cfz * mx
+        const wz = cfz * -mz + cfx * mx
+        mx = wx
+        mz = wz
+      }
+    }
+    MP.outInput.mx = mx
+    MP.outInput.mz = mz
+    MP.outInput.sprint =
+      k.has('ShiftLeft') ||
+      k.has('ShiftRight') ||
+      INPUT.sprint ||
+      padSprint.current
+
+    // ----- Incoming snapshot -----
+    const s = MP.snapshot
+    if (!s) return
+    const fresh = MP.snapshotFresh
+    MP.snapshotFresh = false
+
+    G.scores[0] = s.s[0]
+    G.scores[1] = s.s[1]
+    G.possession = s.pos
+    G.phase = s.ph === 0 ? 'play' : s.ph === 1 ? 'reset' : 'over'
+    if (s.ctrl >= 0 && G.players[s.ctrl]) G.controlled = s.ctrl
+    G.mustClear = s.mc
+    G.message = s.msg
+    G.messageT = s.msgT
+    // The guest's shot meter is simulated on the host and mirrored here
+    G.meterActive = s.gm[0] > 0.5
+    G.meterValue = s.gm[1]
+    G.meterWindow = [s.gm[2], s.gm[3]]
+
+    const kLerp = 1 - Math.exp(-14 * dt)
+    for (let i = 0; i < s.p.length; i++) {
+      const pl = G.players[i]
+      const ps = s.p[i]
+      if (!pl || !ps) continue
+      V.set(ps[0], ps[1], ps[2])
+      // Teleport on big gaps (resets), smooth-lerp otherwise
+      if (pl.pos.distanceToSquared(V) > 9) pl.pos.copy(V)
+      else pl.pos.lerp(V, kLerp)
+      let df = ps[3] - pl.facing
+      while (df > Math.PI) df -= Math.PI * 2
+      while (df < -Math.PI) df += Math.PI * 2
+      pl.facing += df * Math.min(1, 18 * dt)
+      pl.anim = ANIMS[ps[4]] ?? 'idle'
+      // animT drives the animation curves: take the host value on a fresh
+      // packet, advance locally between packets so motion stays smooth
+      if (fresh) pl.animT = ps[5]
+      else pl.animT += dt
+      pl.speed = ps[6]
+      pl.shotStyle = (ps[7] as ShotStyle) ?? 0
+      pl.dunkStyle = ps[8]
+      if (fresh) pl.dunkT = ps[9]
+      else if (pl.anim === 'dunk') pl.dunkT += dt
+      pl.dunking = pl.anim === 'dunk'
+      pl.stunT = ps[10]
+      pl.stumbleT = ps[11]
+      pl.crossLean = ps[12]
+      pl.grounded = ps[13] > 0.5
+      pl.celebrateT = ps[14]
+    }
+
+    const b = G.ball
+    V.set(s.b[0], s.b[1], s.b[2])
+    if (b.pos.distanceToSquared(V) > 9) b.pos.copy(V)
+    else b.pos.lerp(V, kLerp)
+    b.vel.set(s.b[3], s.b[4], s.b[5])
+    b.state = BALL_STATES[s.b[6]] ?? 'loose'
+    b.holder = s.b[7]
+    b.spin = s.b[8]
+  }
+
+  // ================= END ONLINE FRIEND MODE =================
 
   function updateAI(dt: number) {
     const b = G.ball

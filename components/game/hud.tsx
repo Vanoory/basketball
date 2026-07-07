@@ -13,8 +13,24 @@ import {
 import CourtPainter from './court-painter'
 import TouchControls, { useIsTouchDevice } from './touch-controls'
 import { pushAction } from '@/lib/input'
+import {
+  MP,
+  hostRoom,
+  joinRoom,
+  leaveRoom,
+  makeRoomCode,
+  type RoomSettings,
+} from '@/lib/multiplayer'
 
-type Step = 'mode' | 'map' | 'kits' | 'paint'
+type Step =
+  | 'mode'
+  | 'online'
+  | 'onlineMode'
+  | 'join'
+  | 'map'
+  | 'kits'
+  | 'paint'
+  | 'lobby'
 
 export default function Hud() {
   const {
@@ -28,6 +44,8 @@ export default function Hud() {
     winner,
     started,
     mode,
+    mp,
+    myTeam,
     setHud,
   } = useHud()
 
@@ -37,6 +55,11 @@ export default function Hud() {
   const [pickedMap, setPickedMap] = useState<MapId>('city')
   const [kit0, setKit0] = useState(0)
   const [kit1, setKit1] = useState(1)
+  // Online friend mode setup state
+  const [online, setOnline] = useState(false)
+  const [roomCode, setRoomCode] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [netStatus, setNetStatus] = useState('')
 
   const myKit = JERSEY_KITS[SETTINGS.kit0]
   const cpuKit = JERSEY_KITS[SETTINGS.kit1]
@@ -52,13 +75,95 @@ export default function Hud() {
       map: pickedMap,
       scores: [0, 0],
       over: false,
+      mp: false,
+      myTeam: 0,
+    })
+  }
+
+  // Host: everything picked - open the room and wait for the friend
+  function createRoom() {
+    const code = makeRoomCode()
+    setRoomCode(code)
+    setNetStatus('WAITING FOR YOUR FRIEND...')
+    setStep('lobby')
+    const settings: RoomSettings = {
+      mode: pickedMode,
+      map: pickedMap,
+      kit0,
+      kit1,
+    }
+    hostRoom(code, settings, {
+      onGuestJoin: () => {
+        // Friend is in - start the game as host (team 0)
+        SETTINGS.map = settings.map
+        SETTINGS.kit0 = settings.kit0
+        SETTINGS.kit1 = settings.kit1
+        setGameMode(settings.mode)
+        setHud({
+          started: true,
+          mode: settings.mode,
+          map: settings.map,
+          scores: [0, 0],
+          over: false,
+          mp: true,
+          myTeam: 0,
+        })
+      },
+      onGuestLeave: () => {
+        setNetStatus('FRIEND DISCONNECTED')
+        leaveRoom()
+        setStep('mode')
+        setHud({ started: false, over: false, mp: false })
+      },
+    })
+  }
+
+  // Guest: join by code and wait for the host's settings
+  function joinByCode() {
+    const code = joinCode.trim().toUpperCase()
+    if (code.length < 4) {
+      setNetStatus('ENTER THE ROOM CODE')
+      return
+    }
+    setNetStatus('CONNECTING...')
+    joinRoom(code, {
+      onJoined: () => setNetStatus('CONNECTED - WAITING FOR HOST...'),
+      onStart: (settings) => {
+        SETTINGS.map = settings.map
+        SETTINGS.kit0 = settings.kit0
+        SETTINGS.kit1 = settings.kit1
+        setGameMode(settings.mode)
+        setHud({
+          started: true,
+          mode: settings.mode,
+          map: settings.map,
+          scores: [0, 0],
+          over: false,
+          mp: true,
+          myTeam: 1,
+        })
+      },
+      onHostLeave: () => {
+        setNetStatus('HOST DISCONNECTED')
+        leaveRoom()
+        setStep('mode')
+        setHud({ started: false, over: false, mp: false })
+      },
+      onError: (msg) => setNetStatus(msg),
     })
   }
 
   function backToMenu() {
+    leaveRoom()
     setStep('mode')
-    setHud({ started: false, over: false })
+    setOnline(false)
+    setNetStatus('')
+    setHud({ started: false, over: false, mp: false, myTeam: 0 })
   }
+
+  // Scoreboard labels: left is always team 0, right is team 1
+  const leftLabel = mp ? (myTeam === 0 ? 'YOU' : 'FRIEND') : 'YOU'
+  const rightLabel = mp ? (myTeam === 1 ? 'YOU' : 'FRIEND') : 'CPU'
 
   return (
     <div className="pointer-events-none absolute inset-0 select-none">
@@ -74,7 +179,7 @@ export default function Hud() {
             className="inline-block h-2.5 w-2.5"
             style={{ backgroundColor: myKit.jersey }}
           />
-          <span>YOU</span>
+          <span>{leftLabel}</span>
           <span className="min-w-6 text-right text-foreground">{scores[0]}</span>
         </div>
         <div className="flex items-center border-y-4 border-muted bg-background/80 px-3 text-[10px] text-muted-foreground">
@@ -87,7 +192,7 @@ export default function Hud() {
           style={{ color: cpuKit.jersey }}
         >
           <span className="min-w-6 text-left text-foreground">{scores[1]}</span>
-          <span>CPU</span>
+          <span>{rightLabel}</span>
           <span
             className="inline-block h-2.5 w-2.5"
             style={{ backgroundColor: cpuKit.jersey }}
@@ -99,12 +204,12 @@ export default function Hud() {
       {!over && started && (
         <div
           className={`absolute left-1/2 top-16 -translate-x-1/2 border-2 px-2 py-0.5 text-[9px] md:text-[10px] ${
-            possession === 0
+            possession === myTeam
               ? 'border-accent/60 bg-accent/15 text-accent'
               : 'border-danger/60 bg-danger/15 text-danger'
           }`}
         >
-          {possession === 0 ? 'OFFENSE' : 'DEFENSE'}
+          {possession === myTeam ? 'OFFENSE' : 'DEFENSE'}
         </div>
       )}
 
@@ -195,6 +300,107 @@ export default function Hud() {
             <button
               type="button"
               onClick={() => {
+                setOnline(false)
+                setPickedMode('3v3')
+                setStep('map')
+              }}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-primary bg-primary px-6 py-4 text-primary-foreground shadow-[6px_6px_0_#7c2d12] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">3 ON 3</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                STREETBALL - HALF COURT
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOnline(false)
+                setPickedMode('5v5')
+                setStep('map')
+              }}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-accent bg-accent px-6 py-4 text-accent-foreground shadow-[6px_6px_0_#1e3a8a] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">5 ON 5</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                FULL COURT - TWO BASKETS
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNetStatus('')
+                setStep('online')
+              }}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-foreground bg-muted px-6 py-4 text-foreground shadow-[6px_6px_0_#0f172a] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">PLAY WITH A FRIEND</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                ONLINE - ROOM CODE
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Online: create or join */}
+      {!started && step === 'online' && (
+        <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/90 p-6 text-center">
+          <h2 className="text-xl text-primary md:text-3xl [text-shadow:3px_3px_0_#1e293b]">
+            PLAY WITH A FRIEND
+          </h2>
+          <p className="max-w-md text-[10px] leading-relaxed text-muted-foreground md:text-xs">
+            CREATE A GAME AND SHARE THE ROOM CODE, OR ENTER A CODE FROM YOUR
+            FRIEND. YOU PLAY ON OPPOSITE TEAMS.
+          </p>
+          <div className="flex flex-col items-center gap-4 md:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                setOnline(true)
+                setStep('onlineMode')
+              }}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-primary bg-primary px-6 py-4 text-primary-foreground shadow-[6px_6px_0_#7c2d12] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">CREATE GAME</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                PICK FORMAT, MAP AND KITS
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNetStatus('')
+                setJoinCode('')
+                setStep('join')
+              }}
+              className="flex w-56 flex-col items-center gap-1 border-4 border-accent bg-accent px-6 py-4 text-accent-foreground shadow-[6px_6px_0_#1e3a8a] transition-transform hover:scale-105"
+            >
+              <span className="text-sm md:text-base">JOIN WITH CODE</span>
+              <span className="text-[9px] opacity-80 md:text-[10px]">
+                ENTER YOUR FRIEND&apos;S CODE
+              </span>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStep('mode')}
+            className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
+          >
+            BACK
+          </button>
+        </div>
+      )}
+
+      {/* Online: host picks the format */}
+      {!started && step === 'onlineMode' && (
+        <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/90 p-6 text-center">
+          <h2 className="text-xl text-primary md:text-3xl [text-shadow:3px_3px_0_#1e293b]">
+            PICK THE FORMAT
+          </h2>
+          <div className="flex flex-col items-center gap-4 md:flex-row">
+            <button
+              type="button"
+              onClick={() => {
                 setPickedMode('3v3')
                 setStep('map')
               }}
@@ -219,6 +425,93 @@ export default function Hud() {
               </span>
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setStep('online')}
+            className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
+          >
+            BACK
+          </button>
+        </div>
+      )}
+
+      {/* Online: guest enters the room code */}
+      {!started && step === 'join' && (
+        <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/90 p-6 text-center">
+          <h2 className="text-xl text-primary md:text-3xl [text-shadow:3px_3px_0_#1e293b]">
+            ENTER ROOM CODE
+          </h2>
+          <input
+            type="text"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => {
+              if (
+                e.key === 'Enter' &&
+                !e.nativeEvent.isComposing &&
+                e.keyCode !== 229
+              )
+                joinByCode()
+            }}
+            maxLength={6}
+            autoFocus
+            placeholder="ABC12"
+            aria-label="Room code"
+            className="w-52 border-4 border-foreground bg-muted px-4 py-3 text-center text-lg tracking-[0.3em] text-foreground outline-none placeholder:text-muted-foreground/50"
+          />
+          {netStatus && (
+            <p className="text-[10px] text-accent md:text-xs">{netStatus}</p>
+          )}
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                leaveRoom()
+                setNetStatus('')
+                setStep('online')
+              }}
+              className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
+            >
+              BACK
+            </button>
+            <button
+              type="button"
+              onClick={joinByCode}
+              className="border-4 border-primary bg-primary px-5 py-2 text-xs text-primary-foreground shadow-[4px_4px_0_#7c2d12] transition-transform hover:scale-105"
+            >
+              JOIN
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Online: host lobby - show the code, wait for the friend */}
+      {!started && step === 'lobby' && (
+        <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/90 p-6 text-center">
+          <h2 className="text-xl text-primary md:text-3xl [text-shadow:3px_3px_0_#1e293b]">
+            ROOM CODE
+          </h2>
+          <div className="border-4 border-primary bg-muted px-8 py-4 text-3xl tracking-[0.4em] text-primary md:text-5xl">
+            {roomCode}
+          </div>
+          <p className="max-w-md text-[10px] leading-relaxed text-muted-foreground md:text-xs">
+            SEND THIS CODE TO YOUR FRIEND. THE GAME STARTS AUTOMATICALLY WHEN
+            THEY JOIN.
+          </p>
+          <p className="animate-pulse text-[10px] text-accent md:text-xs">
+            {netStatus}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              leaveRoom()
+              setNetStatus('')
+              setStep('online')
+            }}
+            className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
+          >
+            CANCEL
+          </button>
         </div>
       )}
 
@@ -281,7 +574,7 @@ export default function Hud() {
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => setStep('mode')}
+              onClick={() => setStep(online ? 'onlineMode' : 'mode')}
               className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
             >
               BACK
@@ -311,7 +604,7 @@ export default function Hud() {
               onPick={setKit0}
             />
             <KitPicker
-              label="CPU TEAM"
+              label={online ? "FRIEND'S TEAM" : 'CPU TEAM'}
               selected={kit1}
               disabled={kit0}
               onPick={setKit1}
@@ -327,10 +620,10 @@ export default function Hud() {
             </button>
             <button
               type="button"
-              onClick={() => setStep('paint')}
+              onClick={() => (online ? createRoom() : setStep('paint'))}
               className="border-4 border-primary bg-primary px-5 py-2 text-xs text-primary-foreground shadow-[4px_4px_0_#7c2d12] transition-transform hover:scale-105"
             >
-              NEXT
+              {online ? 'CREATE ROOM' : 'NEXT'}
             </button>
           </div>
         </div>
@@ -346,10 +639,14 @@ export default function Hud() {
         <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/85 text-center">
           <h2
             className={`text-3xl md:text-5xl [text-shadow:4px_4px_0_#1e293b] ${
-              winner === 0 ? 'text-accent' : 'text-danger'
+              winner === myTeam ? 'text-accent' : 'text-danger'
             }`}
           >
-            {winner === 0 ? 'YOU WIN!' : 'CPU TEAM WINS!'}
+            {winner === myTeam
+              ? 'YOU WIN!'
+              : mp
+                ? 'YOUR FRIEND WINS!'
+                : 'CPU TEAM WINS!'}
           </h2>
           <p className="text-lg text-foreground md:text-2xl">
             {scores[0]} - {scores[1]}
