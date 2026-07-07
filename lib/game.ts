@@ -4,14 +4,18 @@ import { create } from 'zustand'
 // ---------- Constants ----------
 export const RIM = new THREE.Vector3(0, 3.05, -9.4)
 export const RIM_GROUND = new THREE.Vector3(0, 0, -9.4)
-// Second basket for the 5v5 full court (mirrored across midcourt)
-export const RIM_B = new THREE.Vector3(0, 3.05, 9.4)
-export const RIM_B_GROUND = new THREE.Vector3(0, 0, 9.4)
+// 5v5 full court is LARGER: baskets sit deeper at +-11.9
+export const RIM_5 = new THREE.Vector3(0, 3.05, -11.9)
+export const RIM_5_GROUND = new THREE.Vector3(0, 0, -11.9)
+export const RIM_5B = new THREE.Vector3(0, 3.05, 11.9)
+export const RIM_5B_GROUND = new THREE.Vector3(0, 0, 11.9)
+// Offset of the 5v5 end markings vs the 3v3 half court (rim -9.4 -> -11.9)
+export const END_OFFSET_5V5 = -2.5
 export const THREE_PT_RADIUS = 6.6
 // Mutable court bounds - swapped when the game mode changes
 export const COURT = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 4.6 }
 const COURT_3V3 = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 4.6 }
-const COURT_5V5 = { minX: -8.4, maxX: 8.4, minZ: -10.9, maxZ: 10.9 }
+const COURT_5V5 = { minX: -9.4, maxX: 9.4, minZ: -13.4, maxZ: 13.4 }
 export const GRAVITY = -20
 export const WIN_SCORE = 21
 
@@ -21,11 +25,11 @@ export type GameMode = '3v3' | '5v5'
 // In 3v3 both teams attack the single half-court rim.
 // In 5v5 team 0 attacks the -z rim (RIM), team 1 attacks the +z rim (RIM_B).
 export function attackRim(mode: GameMode, team: 0 | 1) {
-  if (mode === '5v5' && team === 1) return RIM_B
+  if (mode === '5v5') return team === 1 ? RIM_5B : RIM_5
   return RIM
 }
 export function attackRimGround(mode: GameMode, team: 0 | 1) {
-  if (mode === '5v5' && team === 1) return RIM_B_GROUND
+  if (mode === '5v5') return team === 1 ? RIM_5B_GROUND : RIM_5_GROUND
   return RIM_GROUND
 }
 
@@ -268,17 +272,17 @@ export function createGame(mode: GameMode = '3v3'): GameData {
         ]
       : [
           // Team 0 (blue) attacks the -z rim, starts on the +z half
-          makePlayer(0, 0, 0, 0, 1.5),
-          makePlayer(1, 0, 1, -5.5, 3.5),
-          makePlayer(2, 0, 2, 5.5, 3.5),
-          makePlayer(3, 0, 3, -2.8, 6),
-          makePlayer(4, 0, 4, 2.8, 6),
+          makePlayer(0, 0, 0, 0, 2),
+          makePlayer(1, 0, 1, -6, 4.5),
+          makePlayer(2, 0, 2, 6, 4.5),
+          makePlayer(3, 0, 3, -3, 7.5),
+          makePlayer(4, 0, 4, 3, 7.5),
           // Team 1 (red) attacks the +z rim, defends the -z half first
-          makePlayer(5, 1, 0, 0, -1),
-          makePlayer(6, 1, 1, -4.5, -3.5),
-          makePlayer(7, 1, 2, 4.5, -3.5),
-          makePlayer(8, 1, 3, -2.2, -6),
-          makePlayer(9, 1, 4, 2.2, -6),
+          makePlayer(5, 1, 0, 0, -1.5),
+          makePlayer(6, 1, 1, -5, -4.5),
+          makePlayer(7, 1, 2, 5, -4.5),
+          makePlayer(8, 1, 3, -2.5, -7.5),
+          makePlayer(9, 1, 4, 2.5, -7.5),
         ]
   const bounds = mode === '3v3' ? COURT_3V3 : COURT_5V5
   Object.assign(COURT, bounds)

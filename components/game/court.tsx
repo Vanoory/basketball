@@ -83,9 +83,15 @@ function EndMarkings() {
 export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
   const full = mode === '5v5'
   // Floor footprint: half court is offset toward -z, full court is centered
-  const floorLen = full ? 23.2 : 16.4
+  // The 5v5 court is LARGER: baskets at +-11.9, baselines at +-13.9
+  const floorLen = full ? 29.4 : 16.4
   const floorZ = full ? 0 : -3.4
-  const seams = full ? [-9, -5.5, -2, 1.5, 5, 8.5] : [-9, -5.5, -2, 1.5]
+  const seams = full
+    ? [-12.5, -9, -5.5, -2, 1.5, 5, 8.5, 12]
+    : [-9, -5.5, -2, 1.5]
+  const plankCount = full ? 14 : 12
+  const plankStart = full ? -10.5 : -8.25
+  const seamW = full ? 19.5 : 16.5
 
   return (
     <group>
@@ -101,20 +107,20 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
 
       {/* Court apron (colored border band) */}
       <mesh position={[0, -0.01, floorZ]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[20.5, floorLen + 3.2]} />
+        <planeGeometry args={[full ? 23.5 : 20.5, floorLen + 3.2]} />
         <meshLambertMaterial color="#14532d" />
       </mesh>
 
       {/* Wooden court - plank strips with subtle tone variation */}
-      {PLANK_TONES.map((tone, i) => (
+      {Array.from({ length: plankCount }).map((_, i) => (
         <mesh
           key={i}
-          position={[-8.25 + i * 1.5 + 0.75, 0, floorZ]}
+          position={[plankStart + i * 1.5 + 0.75, 0, floorZ]}
           rotation={[-Math.PI / 2, 0, 0]}
           receiveShadow
         >
           <planeGeometry args={[1.5, floorLen]} />
-          <meshLambertMaterial color={tone} />
+          <meshLambertMaterial color={PLANK_TONES[i % PLANK_TONES.length]} />
         </mesh>
       ))}
       {/* Plank seams (horizontal breaks for a real parquet feel) */}
@@ -124,7 +130,7 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
           position={[0, 0.005, z]}
           rotation={[-Math.PI / 2, 0, 0]}
         >
-          <planeGeometry args={[16.5, 0.04]} />
+          <planeGeometry args={[seamW, 0.04]} />
           <meshBasicMaterial color="#a4692f" />
         </mesh>
       ))}
@@ -132,7 +138,7 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
       {full ? (
         <>
           {/* Midcourt line + full center circle */}
-          <Line x={0} z={0} w={17} d={0.12} />
+          <Line x={0} z={0} w={19.1} d={0.12} />
           <mesh position={[0, LINE_Y, 0]} rotation={[-Math.PI / 2, 0, 0]}>
             <ringGeometry args={[1.7, 1.82, 32]} />
             <meshBasicMaterial color={LINE_COLOR} />
@@ -159,15 +165,19 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
           </mesh>
 
           {/* Full-court boundary lines */}
-          <Line x={0} z={11.5} w={17} d={0.12} />
-          <Line x={0} z={-11.5} w={17} d={0.12} />
-          <Line x={-8.45} z={0} w={0.12} d={23.12} />
-          <Line x={8.45} z={0} w={0.12} d={23.12} />
+          <Line x={0} z={13.9} w={19.1} d={0.12} />
+          <Line x={0} z={-13.9} w={19.1} d={0.12} />
+          <Line x={-9.5} z={0} w={0.12} d={27.92} />
+          <Line x={9.5} z={0} w={0.12} d={27.92} />
 
-          {/* Both ends: markings + hoops */}
-          <EndMarkings />
-          <group rotation={[0, Math.PI, 0]}>
+          {/* Both ends: markings + hoops (shifted deeper on the big court) */}
+          <group position={[0, 0, -2.5]}>
             <EndMarkings />
+          </group>
+          <group rotation={[0, Math.PI, 0]}>
+            <group position={[0, 0, -2.5]}>
+              <EndMarkings />
+            </group>
           </group>
         </>
       ) : (
@@ -446,10 +456,10 @@ function Stars() {
       seed = (seed * 16807) % 2147483647
       return seed / 2147483647
     }
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 46; i++) {
       arr.push({
-        x: (rnd() - 0.5) * 90,
-        y: 12 + rnd() * 22,
+        x: (rnd() - 0.5) * 100,
+        y: 12 + rnd() * 24,
         z: -36 - rnd() * 8,
         s: 0.12 + rnd() * 0.2,
       })
@@ -482,6 +492,107 @@ function Floodlight({ x, z }: { x: number; z: number }) {
       <mesh position={[0, 7.05, 0.5]} rotation={[0.5, 0, 0]}>
         <planeGeometry args={[1.2, 0.5]} />
         <meshBasicMaterial color="#fef9c3" />
+      </mesh>
+      {/* Soft volumetric light cone */}
+      <mesh position={[0, 4.2, 1.5]} rotation={[0.42, 0, 0]}>
+        <coneGeometry args={[2.4, 6.6, 4, 1, true]} />
+        <meshBasicMaterial
+          color="#fef9c3"
+          transparent
+          opacity={0.045}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  )
+}
+
+// Sagging strand of warm pixel bulbs strung across the court
+const BULB_COLORS = ['#fbbf24', '#f97316', '#fde68a', '#fca5a5']
+function StringLights({ z, width }: { z: number; width: number }) {
+  const bulbs = useMemo(() => {
+    const arr: { x: number; y: number; c: string }[] = []
+    const n = 15
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1)
+      arr.push({
+        x: (t - 0.5) * width,
+        y: 7.0 - Math.sin(t * Math.PI) * 0.9,
+        c: BULB_COLORS[i % BULB_COLORS.length],
+      })
+    }
+    return arr
+  }, [width])
+  return (
+    <group position={[0, 0, z]}>
+      {/* Cable segments between bulbs */}
+      {bulbs.slice(0, -1).map((b, i) => {
+        const nb = bulbs[i + 1]
+        const mx = (b.x + nb.x) / 2
+        const my = (b.y + nb.y) / 2
+        const len = Math.hypot(nb.x - b.x, nb.y - b.y)
+        const ang = Math.atan2(nb.y - b.y, nb.x - b.x)
+        return (
+          <mesh key={`c${i}`} position={[mx, my, 0]} rotation={[0, 0, ang]}>
+            <boxGeometry args={[len, 0.04, 0.04]} />
+            <meshBasicMaterial color="#1e293b" />
+          </mesh>
+        )
+      })}
+      {bulbs.map((b, i) => (
+        <mesh key={`b${i}`} position={[b.x, b.y - 0.12, 0]}>
+          <boxGeometry args={[0.16, 0.2, 0.16]} />
+          <meshBasicMaterial color={b.c} />
+        </mesh>
+      ))}
+      {/* End poles holding the strand */}
+      {[-1, 1].map((s) => (
+        <mesh key={`p${s}`} position={[s * (width / 2), 3.5, 0]}>
+          <boxGeometry args={[0.14, 7, 0.14]} />
+          <meshLambertMaterial color="#3f4c63" />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// Pixel graffiti tag - blocky spray-paint panels for the fence
+function Graffiti({ x, z }: { x: number; z: number }) {
+  return (
+    <group position={[x, 0, z]}>
+      {[
+        { dx: -0.9, dy: 1.3, w: 0.8, h: 0.9, c: '#22d3ee' },
+        { dx: -0.1, dy: 1.5, w: 0.7, h: 1.1, c: '#f472b6' },
+        { dx: 0.7, dy: 1.25, w: 0.8, h: 0.8, c: '#a3e635' },
+        { dx: -0.4, dy: 0.8, w: 1.6, h: 0.25, c: '#facc15' },
+      ].map((p, i) => (
+        <mesh key={i} position={[p.dx, p.dy, 0]}>
+          <planeGeometry args={[p.w, p.h]} />
+          <meshBasicMaterial color={p.c} side={THREE.DoubleSide} transparent opacity={0.85} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// Blinking rooftop neon sign
+function NeonSign({ x, y, z }: { x: number; y: number; z: number }) {
+  const ref = useRef<THREE.MeshBasicMaterial>(null)
+  useFrame((state) => {
+    if (!ref.current) return
+    const t = state.clock.elapsedTime
+    ref.current.opacity = Math.sin(t * 2.2) > -0.6 ? 1 : 0.15
+  })
+  return (
+    <group position={[x, y, z]}>
+      <mesh>
+        <boxGeometry args={[4.6, 1.4, 0.2]} />
+        <meshLambertMaterial color="#0f172a" />
+      </mesh>
+      <mesh position={[0, 0, 0.12]}>
+        <planeGeometry args={[4, 0.9]} />
+        <meshBasicMaterial ref={ref} color="#f97316" transparent />
       </mesh>
     </group>
   )
@@ -530,26 +641,32 @@ function Bench({ x, z, rot = 0 }: { x: number; z: number; rot?: number }) {
 function Environment({ full = false }: { full?: boolean }) {
   // On the full court everything on the +z side moves out past the second
   // basket so nothing sits on the playing surface.
-  const zOff = full ? 4.5 : 0
+  const zOff = full ? 7.5 : 0
+  const sideX = full ? 13.8 : 12.5
   return (
     <group>
       {/* Bleachers with animated crowd on both sides */}
       <Crowd
-        position={[-12.5, 0, full ? 0 : -3.5]}
+        position={[-sideX, 0, full ? 0 : -3.5]}
         rotation={Math.PI / 2}
         rows={3}
-        cols={full ? 22 : 16}
+        cols={full ? 26 : 16}
       />
       <Crowd
-        position={[12.5, 0, full ? 0 : -3.5]}
+        position={[sideX, 0, full ? 0 : -3.5]}
         rotation={-Math.PI / 2}
         rows={3}
-        cols={full ? 22 : 16}
+        cols={full ? 26 : 16}
       />
-      <Crowd position={[0, 0, -15.5]} rotation={0} rows={2} cols={18} />
+      <Crowd position={[0, 0, full ? -18 : -15.5]} rotation={0} rows={2} cols={18} />
       {full && (
-        <Crowd position={[0, 0, 15.5]} rotation={Math.PI} rows={2} cols={18} />
+        <Crowd position={[0, 0, 18]} rotation={Math.PI} rows={2} cols={18} />
       )}
+
+      {/* String lights over the court - streetball night-game vibe */}
+      <StringLights z={full ? -7 : -6.5} width={full ? 27 : 24} />
+      <StringLights z={full ? 7 : 2.5} width={full ? 27 : 24} />
+      {full && <StringLights z={0} width={27} />}
 
       {/* Chain-link fence behind the court */}
       {Array.from({ length: 13 }).map((_, i) => (
@@ -573,6 +690,12 @@ function Environment({ full = false }: { full?: boolean }) {
         <meshLambertMaterial color="#64748b" />
       </mesh>
 
+      {/* Pixel graffiti tags sprayed along the fence */}
+      <Graffiti x={-13} z={8.98 + zOff} />
+      <Graffiti x={-6} z={8.98 + zOff} />
+      <Graffiti x={6.2} z={8.98 + zOff} />
+      <Graffiti x={13.5} z={8.98 + zOff} />
+
       {/* Night-city skyline (two depth layers) */}
       <Building x={-16} z={-24} w={7} h={14} color="#1e293b" />
       <Building x={-7} z={-26} w={6} h={19} color="#273449" />
@@ -589,6 +712,20 @@ function Environment({ full = false }: { full?: boolean }) {
       {/* Side-street buildings */}
       <Building x={-30} z={-4} w={8} h={11} color="#1c2940" />
       <Building x={30} z={-4} w={8} h={13} color="#1c2940" />
+      <Building x={-32} z={10} w={7} h={9} color="#1a2740" />
+      <Building x={31} z={12} w={7} h={10} color="#1a2740" />
+      {/* Skyline behind the +z end so the city wraps all the way around */}
+      <Building x={-14} z={26 + zOff} w={7} h={12} color="#1e293b" />
+      <Building x={-4} z={28 + zOff} w={8} h={17} color="#243044" />
+      <Building x={6} z={27 + zOff} w={6} h={11} color="#1e293b" />
+      <Building x={16} z={28 + zOff} w={8} h={15} color="#273449" />
+      <Building x={-24} z={30 + zOff} w={9} h={20} color="#16233a" />
+      <Building x={26} z={31 + zOff} w={9} h={18} color="#141f33" />
+
+      {/* Blinking rooftop neon signs */}
+      <NeonSign x={-7} y={20} z={-25.8} />
+      <NeonSign x={16} y={21} z={-32.8} />
+      {full && <NeonSign x={-4} y={18} z={27.8 + zOff} />}
 
       {/* Rooftop antenna blinkers */}
       {[
@@ -629,7 +766,7 @@ function Environment({ full = false }: { full?: boolean }) {
 
       {/* Sideline benches with pixel water coolers */}
       {[-1, 1].map((s) => (
-        <group key={`bench${s}`} position={[s * 6, 0, 6.6 + zOff]}>
+        <group key={`bench${s}`} position={[s * 6, 0, 7.2 + zOff]}>
           <mesh position={[0, 0.35, 0]}>
             <boxGeometry args={[3.2, 0.12, 0.6]} />
             <meshLambertMaterial color="#7c5a3a" />
@@ -670,7 +807,7 @@ function Environment({ full = false }: { full?: boolean }) {
       ))}
 
       {/* Standalone pixel scoreboard tower behind the far crowd */}
-      <group position={[8.5, 0, -15]}>
+      <group position={[8.5, 0, full ? -17.5 : -15]}>
         <mesh position={[0, 3, 0]}>
           <boxGeometry args={[0.3, 6, 0.3]} />
           <meshLambertMaterial color="#334155" />
@@ -713,22 +850,24 @@ function Environment({ full = false }: { full?: boolean }) {
       ))}
 
       {/* Park trees around the court */}
-      <Tree x={-15} z={5} s={1.3} />
-      <Tree x={-17} z={-9} s={1.1} />
-      <Tree x={16} z={4} s={1.2} />
-      <Tree x={17} z={-10} s={1.4} />
-      <Tree x={-20} z={0} s={0.9} />
-      <Tree x={21} z={-2} s={1} />
+      <Tree x={-16} z={5} s={1.3} />
+      <Tree x={-18} z={-9} s={1.1} />
+      <Tree x={17} z={4} s={1.2} />
+      <Tree x={18} z={-10} s={1.4} />
+      <Tree x={-21} z={0} s={0.9} />
+      <Tree x={22} z={-2} s={1} />
+      <Tree x={-17} z={12 + zOff} s={1.2} />
+      <Tree x={18} z={11 + zOff} s={1} />
 
       {/* Benches along the sideline */}
-      <Bench x={-10.6} z={2} rot={Math.PI / 2} />
-      <Bench x={10.6} z={-8.5} rot={-Math.PI / 2} />
+      <Bench x={full ? -11.8 : -10.6} z={2} rot={Math.PI / 2} />
+      <Bench x={full ? 11.8 : 10.6} z={-8.5} rot={-Math.PI / 2} />
 
       {/* Floodlights on the corners */}
-      <Floodlight x={-11} z={6 + zOff * 1.6} />
-      <Floodlight x={11} z={6 + zOff * 1.6} />
-      <Floodlight x={-11} z={-13} />
-      <Floodlight x={11} z={-13} />
+      <Floodlight x={full ? -12.5 : -11} z={6 + zOff * 1.35} />
+      <Floodlight x={full ? 12.5 : 11} z={6 + zOff * 1.35} />
+      <Floodlight x={full ? -12.5 : -11} z={full ? -16 : -13} />
+      <Floodlight x={full ? 12.5 : 11} z={full ? -16 : -13} />
     </group>
   )
 }

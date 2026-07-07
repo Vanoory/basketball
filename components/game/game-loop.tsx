@@ -39,15 +39,15 @@ const OFFENSE_SPOTS = [
   new THREE.Vector3(0, 0, 1.8), // top of key
 ]
 
-// 5v5 spots: pulled in tighter so the offense stays in its frontcourt
+// 5v5 spots: built around the deeper -z rim (-11.9) on the larger court
 const OFFENSE_SPOTS_5A = [
-  new THREE.Vector3(-6.9, 0, -8.6),
-  new THREE.Vector3(6.9, 0, -8.6),
-  new THREE.Vector3(-6.2, 0, -4.6),
-  new THREE.Vector3(6.2, 0, -4.6),
-  new THREE.Vector3(-3.2, 0, -1.4),
-  new THREE.Vector3(3.2, 0, -1.4),
-  new THREE.Vector3(0, 0, -2.4),
+  new THREE.Vector3(-7.6, 0, -11.0),
+  new THREE.Vector3(7.6, 0, -11.0),
+  new THREE.Vector3(-6.9, 0, -7.0),
+  new THREE.Vector3(6.9, 0, -7.0),
+  new THREE.Vector3(-3.5, 0, -3.8),
+  new THREE.Vector3(3.5, 0, -3.8),
+  new THREE.Vector3(0, 0, -4.8),
 ]
 // Mirrored spots for the team attacking the +z rim
 const OFFENSE_SPOTS_5B = OFFENSE_SPOTS_5A.map(
@@ -394,11 +394,11 @@ function applyReset() {
     off[1].pos.set(-5.6, 0, -1.8)
     off[2].pos.set(5.6, 0, -1.8)
   } else {
-    handler.pos.set(0, 0, 2.5 * m)
-    off[1].pos.set(-5.6, 0, -1.0 * m)
-    off[2].pos.set(5.6, 0, -1.0 * m)
-    off[3].pos.set(-2.8, 0, -4.5 * m)
-    off[4].pos.set(2.8, 0, -4.5 * m)
+    handler.pos.set(0, 0, 3.2 * m)
+    off[1].pos.set(-6.2, 0, -1.5 * m)
+    off[2].pos.set(6.2, 0, -1.5 * m)
+    off[3].pos.set(-3.0, 0, -6.0 * m)
+    off[4].pos.set(3.0, 0, -6.0 * m)
   }
 
   for (const p of G.players) {
@@ -956,6 +956,24 @@ export default function GameLoop() {
     if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1
     if (k.has('KeyD') || k.has('ArrowRight')) mx += 1
 
+    // CAMERA-RELATIVE input: W always pushes "up the screen" no matter how
+    // the camera is oriented. Critical in 5v5 where the broadcast camera
+    // films from the sideline - without this WASD feels completely chaotic.
+    if (mx !== 0 || mz !== 0) {
+      let cfx = G.camLook.x - G.camPos.x
+      let cfz = G.camLook.z - G.camPos.z
+      const cfl = Math.hypot(cfx, cfz)
+      if (cfl > 0.0001) {
+        cfx /= cfl
+        cfz /= cfl
+        // right = forward x up (projected on the floor plane)
+        const wx = cfx * -mz + -cfz * mx
+        const wz = cfz * -mz + cfx * mx
+        mx = wx
+        mz = wz
+      }
+    }
+
     const hasBall = b.state === 'held' && b.holder === me.id
     const defending = G.possession !== me.team
 
@@ -968,7 +986,12 @@ export default function GameLoop() {
       const sprint = k.has('ShiftLeft') || k.has('ShiftRight')
       // Defense is snappier: higher accel + a small speed edge so you can
       // actually stay in front of the AI handler.
-      const speed = sprint ? (hasBall ? 6.4 : defending ? 7.4 : 7) : defending ? 5.2 : 4.6
+      // The larger 5v5 court gets a speed bump so running the floor
+      // doesn't feel sluggish.
+      const modeBoost = G.mode === '5v5' ? 1.12 : 1
+      const speed =
+        (sprint ? (hasBall ? 6.4 : defending ? 7.4 : 7) : defending ? 5.2 : 4.6) *
+        modeBoost
       applyMove(me, mx, mz, speed, defending ? 15 : 12, dt)
       if (me.grounded) me.anim = 'run'
       // While defending, keep facing the ball even when strafing so blocks
@@ -1740,25 +1763,27 @@ export default function GameLoop() {
     const me = G.players[G.controlled]
     const defending = G.phase === 'play' && G.possession !== me.team
     const full = G.mode === '5v5'
-    const maxFz = full ? 10 : 4.5
+    const maxFz = full ? 12.6 : 4.5
+    const minFz = full ? -12.6 : -10
+    const maxFx = full ? 7.8 : 6.5
 
     // Lead the action: anticipate where the ball is going
     const leadX = THREE.MathUtils.clamp(b.vel.x * 0.28, -2.2, 2.2)
-    const leadZ = THREE.MathUtils.clamp(b.vel.z * 0.22, -1.8, 1.8)
-    let fx = THREE.MathUtils.clamp(b.pos.x + leadX, -6.5, 6.5)
-    let fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, maxFz)
+    const leadZ = THREE.MathUtils.clamp(b.vel.z * (full ? 0.3 : 0.22), -2.6, 2.6)
+    let fx = THREE.MathUtils.clamp(b.pos.x + leadX, -maxFx, maxFx)
+    let fz = THREE.MathUtils.clamp(b.pos.z + leadZ, minFz, maxFz)
 
     // DEFENSE: frame the midpoint between MY defender and the ball so both
     // are always on screen - much easier to position yourself.
     if (defending) {
       fx = THREE.MathUtils.clamp(
         me.pos.x * 0.45 + b.pos.x * 0.55 + leadX * 0.4,
-        -6.5,
-        6.5,
+        -maxFx,
+        maxFx,
       )
       fz = THREE.MathUtils.clamp(
         me.pos.z * 0.45 + b.pos.z * 0.55 + leadZ * 0.4,
-        -10,
+        minFz,
         maxFz,
       )
     }
@@ -1787,11 +1812,12 @@ export default function GameLoop() {
 
     if (full) {
       // 5v5 BROADCAST CAM: classic sideline view from the +x side so both
-      // baskets stay readable as play flows end to end.
-      const sideH = 8.6 - rimT * 1.4 + airT * 0.9 + speedT * 0.6
-      const sideDist = 13.6 - rimT * 2.0 + speedT * 0.8
-      V.set(sideDist, sideH, fz * 0.72)
-      V2.set(fx * 0.35 - 1.2, 0.9 + airT * 1.1, fz * 0.85)
+      // baskets stay readable as play flows end to end. Pulled higher and
+      // further back for the larger court.
+      const sideH = 10.2 - rimT * 1.4 + airT * 0.9 + speedT * 0.6
+      const sideDist = 16.6 - rimT * 2.2 + speedT * 0.9
+      V.set(sideDist, sideH, fz * 0.78)
+      V2.set(fx * 0.35 - 1.4, 0.9 + airT * 1.1, fz * 0.88)
     } else {
       V.set(fx * (0.5 + rimT * 0.18) + orbit, camH, fz * 0.42 + camDist)
       V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
@@ -1847,7 +1873,11 @@ export default function GameLoop() {
     // Zoom punch-in near the rim, slight wide-angle on fast breaks;
     // defense keeps a steady wider lens.
     const cam = camera as THREE.PerspectiveCamera
-    const targetFov = defending ? 53 : 50 - rimT * 6 + speedT * 2
+    const targetFov = defending
+      ? full
+        ? 55
+        : 53
+      : (full ? 53 : 50) - rimT * 6 + speedT * 2
     if (Math.abs(cam.fov - targetFov) > 0.05) {
       cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-4 * dt))
       cam.updateProjectionMatrix()
