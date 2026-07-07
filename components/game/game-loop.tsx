@@ -719,11 +719,11 @@ export default function GameLoop() {
 
     // Offense with ball: dunk or jump shot
     if (b.state === 'held' && b.holder === me.id) {
-      if (G.mustClear && !isThree(me.pos)) {
+      if (G.mustClear && !isThree(me.pos, me.team)) {
         setMessage('CLEAR IT PAST THE ARC!', 1.0)
         return
       }
-      const d = distToRim(me.pos)
+      const d = distToRim(me.pos, me.team)
       if (d < 2.7) {
         startDunk(me)
       } else {
@@ -791,7 +791,7 @@ export default function GameLoop() {
       const p = Math.max(0.03, 0.7 - err * 5.5 - contest * 0.35)
       willScore = Math.random() < p
     }
-    const pts = isThree(me.pos) ? 3 : 2
+    const pts = isThree(me.pos, me.team) ? 3 : 2
     launchShot(me, willScore, pts)
   }
 
@@ -901,7 +901,7 @@ export default function GameLoop() {
       // "Clear the ball" rule: new possession must take it beyond the arc
       if (G.mustClear && G.ball.state === 'held' && G.ball.holder >= 0) {
         const h = G.players[G.ball.holder]
-        if (h.team === G.possession && isThree(h.pos)) {
+        if (h.team === G.possession && isThree(h.pos, h.team)) {
           G.mustClear = false
           setMessage('BALL IN - GO!', 1.1)
         }
@@ -984,10 +984,8 @@ export default function GameLoop() {
       applyMove(me, 0, 0, 0, 16, dt)
       if (me.grounded && me.anim === 'run') me.anim = 'idle'
       if (hasBall) {
-        me.facing = Math.atan2(
-          RIM_GROUND.x - me.pos.x,
-          RIM_GROUND.z - me.pos.z,
-        )
+        const rg = rimGroundOf(me.team)
+        me.facing = Math.atan2(rg.x - me.pos.x, rg.z - me.pos.z)
       } else if (defending && b.holder >= 0) {
         // Standing on defense: square up to the ball handler automatically
         const h = G.players[b.holder]
@@ -1045,9 +1043,9 @@ export default function GameLoop() {
       }
       if (p.anim === 'shoot') {
         if (b.holder === p.id && p.animT >= 0.32) {
-          const d = distToRim(p.pos)
+          const d = distToRim(p.pos, p.team)
           const contest = Math.max(0, 1.6 - nearestOpponentDist(p)) / 1.6
-          const three = isThree(p.pos)
+          const three = isThree(p.pos, p.team)
           // Specialists hit their favorite shot more often: gunners from
           // deep, mid-range artists from the elbows.
           const spec = three
@@ -1078,7 +1076,8 @@ export default function GameLoop() {
   // ---------- AI: ball handler ----------
   function updateAIHandler(p: PlayerData, dt: number) {
     p.aiTimer -= dt
-    const d = distToRim(p.pos)
+    const RG = rimGroundOf(p.team)
+    const d = distToRim(p.pos, p.team)
     const defDist = nearestOpponentDist(p)
 
     // Fresh possession: roll a scoring plan from this player's tendency
@@ -1090,12 +1089,12 @@ export default function GameLoop() {
 
     // Clear the ball first: dribble it out beyond the arc, or hit a
     // teammate already spotted up outside for the quick three look.
-    if (G.mustClear && !isThree(p.pos)) {
+    if (G.mustClear && !isThree(p.pos, p.team)) {
       let outMate: PlayerData | null = null
       let bestOpen = 0
       for (const m of G.players) {
         if (m.team !== p.team || m.id === p.id || m.stunT > 0) continue
-        if (!isThree(m.pos)) continue
+        if (!isThree(m.pos, m.team)) continue
         const o = opennessOf(m)
         if (o > bestOpen) {
           bestOpen = o
@@ -1144,7 +1143,7 @@ export default function GameLoop() {
       }
       // Crowded at the arc: create space with a step-back three
       if (beyondArc && defDist < 1.1 && p.aiTimer <= 0 && Math.random() < 0.5) {
-        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        V2.copy(p.pos).sub(RG).setY(0).normalize()
         p.vel.x = V2.x * 3.0
         p.vel.z = V2.z * 3.0
         p.speed = 3.0
@@ -1154,8 +1153,8 @@ export default function GameLoop() {
       }
       // Not behind the line yet: dribble out to a spot on the arc
       if (!beyondArc) {
-        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
-        V3.copy(RIM_GROUND).addScaledVector(V2, THREE_PT_RADIUS + 0.7)
+        V2.copy(p.pos).sub(RG).setY(0).normalize()
+        V3.copy(RG).addScaledVector(V2, THREE_PT_RADIUS + 0.7)
         clampCourt(V3, 0.6)
         steerToward(p, V3, 5.8, 9, dt, 0.3)
         if (p.grounded) p.anim = 'run'
@@ -1172,7 +1171,7 @@ export default function GameLoop() {
       }
       // Shuffle along the arc waiting for a window
       const side = Math.sin(G.time * 1.7 + p.id) > 0 ? 1 : -1
-      V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+      V2.copy(p.pos).sub(RG).setY(0).normalize()
       applyMove(p, V2.z * side * 0.8, -V2.x * side * 0.8, 3.4, 8, dt)
       if (p.grounded) p.anim = 'run'
       return
@@ -1189,7 +1188,7 @@ export default function GameLoop() {
       }
       // Contested in the mid post: rise for the tough fadeaway
       if (inMidRange && defDist < 1.2 && p.aiTimer <= 0 && Math.random() < 0.4) {
-        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        V2.copy(p.pos).sub(RG).setY(0).normalize()
         p.vel.x = V2.x * 2.6
         p.vel.z = V2.z * 2.6
         p.speed = 2.6
@@ -1198,8 +1197,8 @@ export default function GameLoop() {
       }
       // Work toward the elbow / short wing
       if (!inMidRange) {
-        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
-        V3.copy(RIM_GROUND).addScaledVector(V2, 4.4)
+        V2.copy(p.pos).sub(RG).setY(0).normalize()
+        V3.copy(RG).addScaledVector(V2, 4.4)
         clampCourt(V3, 0.6)
         steerToward(p, V3, 5.4, 9, dt, 0.3)
         if (p.grounded) p.anim = 'run'
@@ -1216,7 +1215,7 @@ export default function GameLoop() {
       }
       // Jab-step dance in the mid post
       const side = Math.sin(G.time * 2.4 + p.id * 1.7) > 0 ? 1 : -1
-      V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+      V2.copy(p.pos).sub(RG).setY(0).normalize()
       applyMove(p, V2.z * side * 0.7, -V2.x * side * 0.7, 3.0, 8, dt)
       if (p.grounded) p.anim = 'run'
       return
@@ -1231,7 +1230,7 @@ export default function GameLoop() {
       }
       // Short floater over collapsing help defense
       if (p.aiPlan === 'drive' && d < 4.6 && d > 2.7 && defDist < 1.3 && Math.random() < 0.35) {
-        V2.copy(RIM_GROUND).sub(p.pos).setY(0).normalize()
+        V2.copy(RG).sub(p.pos).setY(0).normalize()
         p.vel.x = V2.x * 2.6
         p.vel.z = V2.z * 2.6
         p.speed = 2.6
@@ -1254,7 +1253,7 @@ export default function GameLoop() {
     }
 
     // Dribble attack with real crossover moves
-    V2.copy(RIM_GROUND).sub(p.pos).normalize()
+    V2.copy(RG).sub(p.pos).normalize()
     if (defDist < 1.4) {
       // Hard lateral cut - can drop the defender via the same ankle system
       const side = Math.sin(G.time * 3.1 + p.id * 2) > 0 ? 1 : -1
@@ -1276,6 +1275,8 @@ export default function GameLoop() {
   function updateAIOffBall(p: PlayerData, dt: number) {
     p.aiTimer -= dt
     const b = G.ball
+    const RG = rimGroundOf(p.team)
+    const inFront = RG.z < 0 ? 1 : -1
     const handler = b.holder >= 0 ? G.players[b.holder] : null
     const myOpen = opennessOf(p)
 
@@ -1285,9 +1286,9 @@ export default function GameLoop() {
         // Backdoor cut to the rim
         p.cutting = true
         p.spot.set(
-          RIM_GROUND.x + (Math.random() - 0.5) * 2.4,
+          RG.x + (Math.random() - 0.5) * 2.4,
           0,
-          RIM_GROUND.z + 1.6 + Math.random(),
+          RG.z + (1.6 + Math.random()) * inFront,
         )
         p.aiTimer = 1.2 + Math.random() * 0.6
       } else if (roll < 0.42 && handler && handler.team === p.team) {
@@ -1313,9 +1314,10 @@ export default function GameLoop() {
       } else {
         // Relocate to the most open perimeter spot
         p.cutting = false
-        let best = OFFENSE_SPOTS[0]
+        const spots = offenseSpots(p.team)
+        let best = spots[0]
         let bs = Number.NEGATIVE_INFINITY
-        for (const s of OFFENSE_SPOTS) {
+        for (const s of spots) {
           let score = Math.random() * 1.2
           // Prefer spots far from defenders
           for (const o of G.players) {
@@ -1342,7 +1344,7 @@ export default function GameLoop() {
     // stay open for the kick-out (real spacing movement)
     if (handler && handler.team === p.team && !p.cutting) {
       const handlerDriving =
-        distToRim(handler.pos) < 5.5 &&
+        distToRim(handler.pos, handler.team) < 5.5 &&
         Math.hypot(handler.vel.x, handler.vel.z) > 3
       if (handlerDriving && Math.abs(p.spot.x) > 2) {
         // Slide 1-2m along my side's arc away from the drive lane
@@ -1389,10 +1391,18 @@ export default function GameLoop() {
   }
 
   // ---------- AI: defense with reaction time + momentum ----------
+  // Team slot (0..perTeam-1) - defenders match up with the same slot
+  function slotOf(p: PlayerData) {
+    return p.team === 0 ? p.id : p.id - G.perTeam
+  }
+
   function updateAIDefender(p: PlayerData, dt: number) {
     const b = G.ball
-    const idx = p.id % 3
-    let man = G.players.find((o) => o.team !== p.team && o.id % 3 === idx)!
+    const idx = slotOf(p)
+    let man = G.players.find((o) => o.team !== p.team && slotOf(o) === idx)!
+    // Rim the OFFENSE is attacking = the rim I am protecting
+    const offTeam = (p.team === 0 ? 1 : 0) as 0 | 1
+    const RG = rimGroundOf(offTeam)
 
     const handler = b.holder >= 0 ? G.players[b.holder] : null
 
@@ -1401,12 +1411,12 @@ export default function GameLoop() {
     p.helpDef = false
     if (handler && handler.team !== p.team && handler.id !== man.id) {
       const hisDefender = G.players.find(
-        (o) => o.team === p.team && o.id % 3 === handler.id % 3,
+        (o) => o.team === p.team && slotOf(o) === slotOf(handler),
       )!
-      const handlerToRim = distToRim(handler.pos)
+      const handlerToRim = distToRim(handler.pos, handler.team)
       const defBeaten =
         hisDefender.stunT > 0 ||
-        distToRim(hisDefender.pos) > handlerToRim + 0.6
+        distToRim(hisDefender.pos, handler.team) > handlerToRim + 0.6
       if (defBeaten && handlerToRim < 5) {
         // Am I the closest helper?
         let closest = true
@@ -1434,9 +1444,9 @@ export default function GameLoop() {
     p.reactT -= dt
     if (p.reactT <= 0) {
       const gap = manHasBall
-        ? THREE.MathUtils.clamp(distToRim(man.pos) * 0.18, 0.55, 1.1)
-        : THREE.MathUtils.clamp(distToRim(man.pos) * 0.28, 0.9, 1.9)
-      V2.copy(RIM_GROUND).sub(man.pos)
+        ? THREE.MathUtils.clamp(distToRim(man.pos, offTeam) * 0.18, 0.55, 1.1)
+        : THREE.MathUtils.clamp(distToRim(man.pos, offTeam) * 0.28, 0.9, 1.9)
+      V2.copy(RG).sub(man.pos)
       V2.y = 0
       const toRim = V2.length()
       V2.normalize().multiplyScalar(Math.min(gap, toRim * 0.5))
@@ -1454,8 +1464,8 @@ export default function GameLoop() {
     // TRAILING: if the man blew by (closer to the rim by a real margin, or
     // we got hung up on a screen), the defender loses contact and has to
     // sprint back on the recovery angle - just like real defense.
-    const manToRim = distToRim(man.pos)
-    const meToRim = distToRim(p.pos)
+    const manToRim = distToRim(man.pos, offTeam)
+    const meToRim = distToRim(p.pos, offTeam)
     const gotBeat =
       p.screenedT > 0 || (manToRim < meToRim - 0.7 && dMan > 1.6)
     p.trailing = gotBeat
@@ -1472,7 +1482,7 @@ export default function GameLoop() {
     if (gotBeat && manToRim > 1.5) {
       // Recovery sprint to a point BETWEEN the man and the rim (not to the
       // man himself) - the real way to get back in front.
-      V3.copy(RIM_GROUND).sub(man.pos).normalize()
+      V3.copy(RG).sub(man.pos).normalize()
       V3.multiplyScalar(Math.min(1.6, manToRim * 0.45)).add(man.pos)
       // Lead ahead of where he is driving
       V3.x += man.vel.x * 0.22
@@ -1624,32 +1634,38 @@ export default function GameLoop() {
       b.vel.y += GRAVITY * dt
 
       const shooter = G.players[b.shooterId]
+      const rim = rimOf(shooter.team)
+      const inFront = rim.z < 0 ? 1 : -1
       if (b.shotWillScore) {
-        if (b.vel.y < 0 && b.pos.y <= RIM.y - 0.05) {
+        if (b.vel.y < 0 && b.pos.y <= rim.y - 0.05) {
           scoreBasket(shooter.team as 0 | 1, b.shotPoints, shooter)
           b.state = 'loose'
-          b.pos.set(RIM.x, RIM.y - 0.4, RIM.z)
-          b.vel.set(0, -2.5, 0.3)
+          b.pos.set(rim.x, rim.y - 0.4, rim.z)
+          b.vel.set(0, -2.5, 0.3 * inFront)
         }
       } else {
+        // Backboard: 0.55 behind the rim on the attacked basket
+        const boardZ = rim.z - 0.55 * inFront
+        const behindBoard =
+          inFront > 0 ? b.pos.z < boardZ : b.pos.z > boardZ
         if (
-          b.pos.z < -9.95 &&
+          behindBoard &&
           b.pos.y > 2.9 &&
           b.pos.y < 4.4 &&
-          Math.abs(b.pos.x) < 1.25
+          Math.abs(b.pos.x - rim.x) < 1.25
         ) {
-          b.pos.z = -9.95
-          b.vel.z = Math.abs(b.vel.z) * 0.5
+          b.pos.z = boardZ
+          b.vel.z = Math.abs(b.vel.z) * 0.5 * inFront
           b.state = 'loose'
         }
-        const dr = b.pos.distanceTo(RIM)
+        const dr = b.pos.distanceTo(rim)
         if (dr < 0.6 && b.shotT > 0.25) {
           const ang = Math.random() * Math.PI * 2
           b.state = 'loose'
           b.vel.set(
             Math.cos(ang) * (2 + Math.random() * 2.5),
             2.5 + Math.random() * 2,
-            Math.abs(Math.sin(ang)) * (2 + Math.random() * 2.5),
+            Math.abs(Math.sin(ang)) * (2 + Math.random() * 2.5) * inFront,
           )
           setMessage('OFF THE RIM!', 1.2)
         }
@@ -1701,10 +1717,15 @@ export default function GameLoop() {
     const prev = G.possession
     G.inboundTeam = -1
     if (p.team !== prev) {
-      // Change of possession: play on, but the ball must be cleared
+      // Change of possession: in 3v3 the ball must be cleared past the
+      // arc; in 5v5 the new team just attacks the opposite basket.
       G.possession = p.team as 0 | 1
-      G.mustClear = true
-      setMessage(p.team === 0 ? 'YOUR BALL - CLEAR IT!' : 'RED BALL!', 1.4)
+      G.mustClear = G.mode === '3v3'
+      if (G.mode === '3v3') {
+        setMessage(p.team === 0 ? 'YOUR BALL - CLEAR IT!' : 'RED BALL!', 1.4)
+      } else {
+        setMessage(p.team === 0 ? 'YOUR BALL - PUSH IT!' : 'RED BALL!', 1.4)
+      }
     }
     if (p.team === 0) {
       G.controlled = p.id
@@ -1718,12 +1739,14 @@ export default function GameLoop() {
     const b = G.ball
     const me = G.players[G.controlled]
     const defending = G.phase === 'play' && G.possession !== me.team
+    const full = G.mode === '5v5'
+    const maxFz = full ? 10 : 4.5
 
     // Lead the action: anticipate where the ball is going
     const leadX = THREE.MathUtils.clamp(b.vel.x * 0.28, -2.2, 2.2)
     const leadZ = THREE.MathUtils.clamp(b.vel.z * 0.22, -1.8, 1.8)
     let fx = THREE.MathUtils.clamp(b.pos.x + leadX, -6.5, 6.5)
-    let fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, 4.5)
+    let fz = THREE.MathUtils.clamp(b.pos.z + leadZ, -10, maxFz)
 
     // DEFENSE: frame the midpoint between MY defender and the ball so both
     // are always on screen - much easier to position yourself.
@@ -1736,12 +1759,17 @@ export default function GameLoop() {
       fz = THREE.MathUtils.clamp(
         me.pos.z * 0.45 + b.pos.z * 0.55 + leadZ * 0.4,
         -10,
-        4.5,
+        maxFz,
       )
     }
 
-    // Action intensity: 0 out top, 1 at the rim -> camera pushes in and drops
-    const rimT = THREE.MathUtils.clamp(1 - distToRim(b.pos) / 12, 0, 1)
+    // Action intensity: 0 out top, 1 at the rim -> camera pushes in and
+    // drops. In 5v5 the "action rim" is whichever basket is being attacked.
+    const rimT = THREE.MathUtils.clamp(
+      1 - distToRim(b.pos, G.possession) / 12,
+      0,
+      1,
+    )
     // Airborne ball (shot/dunk) pulls the camera up slightly for the arc
     const airT = THREE.MathUtils.clamp((b.pos.y - 1.6) / 3.5, 0, 1)
     // Fast ball = wider, more cinematic framing
@@ -1757,12 +1785,22 @@ export default function GameLoop() {
     // Subtle lateral orbit follows the ball side for a dynamic angle
     const orbit = defending ? 0 : THREE.MathUtils.clamp(fx * 0.1, -0.8, 0.8)
 
-    V.set(fx * (0.5 + rimT * 0.18) + orbit, camH, fz * 0.42 + camDist)
-    V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
+    if (full) {
+      // 5v5 BROADCAST CAM: classic sideline view from the +x side so both
+      // baskets stay readable as play flows end to end.
+      const sideH = 8.6 - rimT * 1.4 + airT * 0.9 + speedT * 0.6
+      const sideDist = 13.6 - rimT * 2.0 + speedT * 0.8
+      V.set(sideDist, sideH, fz * 0.72)
+      V2.set(fx * 0.35 - 1.2, 0.9 + airT * 1.1, fz * 0.85)
+    } else {
+      V.set(fx * (0.5 + rimT * 0.18) + orbit, camH, fz * 0.42 + camDist)
+      V2.set(fx * 0.7, 1.0 + airT * 1.1, fz * 0.58 - 3.0)
+    }
 
-    // DEFENSE CAM: when your team is defending, glide behind the hoop so
-    // you see the attack coming at you - much easier to read drives/cuts.
+    // DEFENSE CAM (3v3 only): when your team is defending, glide behind
+    // the hoop so you see the attack coming at you.
     const wantDef =
+      !full &&
       G.phase === 'play' &&
       G.possession === 1 &&
       b.state !== 'shot' &&
@@ -1778,7 +1816,7 @@ export default function GameLoop() {
       V3.set(
         THREE.MathUtils.clamp(fx * 0.45, -3.2, 3.2),
         8.8 - rimT * 0.5,
-        RIM_GROUND.z - 7.2,
+        rimGroundOf(0).z - 7.2,
       )
       V.lerp(V3, db)
       V3.set(
@@ -1835,6 +1873,7 @@ export default function GameLoop() {
       patch.over = over
       patch.winner = G.scores[0] > G.scores[1] ? 0 : 1
     }
+    if (hud.mode !== G.mode) patch.mode = G.mode
     if (Object.keys(patch).length > 0) hud.setHud(patch)
   }
 
