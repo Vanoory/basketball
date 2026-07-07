@@ -18,8 +18,10 @@ import {
   distToRim,
   isThree,
   useHud,
+  THREE_PT_RADIUS,
   type PlayerData,
   type ShotStyle,
+  type AIPlan,
 } from '@/lib/game'
 
 const V = new THREE.Vector3()
@@ -54,6 +56,19 @@ function nearestOpponentDist(pl: PlayerData) {
 function setMessage(msg: string, t = 1.8) {
   G.message = msg
   G.messageT = t
+}
+
+// Roll a scoring plan from the player's shot tendency the moment he gets
+// the rock: shooters hunt pull-up threes, bigs put their head down and
+// drive, wings mix in the mid-range game.
+function pickPlan(p: PlayerData): AIPlan {
+  const t = p.tendency
+  const total = t.three + t.mid + t.drive
+  const r = Math.random() * total
+  if (r < t.three) return 'pull3'
+  if (r < t.three + t.mid) return 'midpull'
+  // Some drives start as a patient probe before committing
+  return Math.random() < 0.75 ? 'drive' : 'probe'
 }
 
 // ---------- Momentum movement ----------
@@ -602,6 +617,7 @@ export default function GameLoop() {
   const keys = useRef<Set<string>>(new Set())
   const spaceHeld = useRef(false)
   const stealCooldown = useRef(0)
+  const lastHolder = useRef(-1)
   const camInit = useRef(false)
   const defCamBlend = useRef(0)
   const { camera } = useThree()
@@ -940,6 +956,13 @@ export default function GameLoop() {
   function updateAI(dt: number) {
     const b = G.ball
 
+    // New handler picks a fresh scoring plan the moment he gets the ball
+    if (b.state === 'held' && b.holder >= 0 && b.holder !== lastHolder.current) {
+      lastHolder.current = b.holder
+      G.players[b.holder].aiPlanFresh = true
+    }
+    if (b.state !== 'held') lastHolder.current = -1
+
     // Loose ball: nearest AI player from each team hustles for it
     let chaser0 = -1
     let chaser1 = -1
@@ -978,8 +1001,19 @@ export default function GameLoop() {
         if (b.holder === p.id && p.animT >= 0.32) {
           const d = distToRim(p.pos)
           const contest = Math.max(0, 1.6 - nearestOpponentDist(p)) / 1.6
-          const prob = Math.max(0.15, 0.62 - d * 0.03 - contest * 0.35)
-          launchShot(p, Math.random() < prob, isThree(p.pos) ? 3 : 2)
+          const three = isThree(p.pos)
+          // Specialists hit their favorite shot more often: gunners from
+          // deep, mid-range artists from the elbows.
+          const spec = three
+            ? p.tendency.three * 0.3
+            : d > 3
+              ? p.tendency.mid * 0.25
+              : 0
+          const prob = Math.max(
+            0.15,
+            0.6 - d * 0.028 - contest * 0.35 + spec,
+          )
+          launchShot(p, Math.random() < prob, three ? 3 : 2)
         }
         continue
       }
@@ -1000,6 +1034,13 @@ export default function GameLoop() {
     p.aiTimer -= dt
     const d = distToRim(p.pos)
     const defDist = nearestOpponentDist(p)
+
+    // Fresh possession: roll a scoring plan from this player's tendency
+    if (p.aiPlanFresh) {
+      p.aiPlanFresh = false
+      p.aiPlan = pickPlan(p)
+      p.aiTimer = 0.5 + Math.random() * 0.7
+    }
 
     // Clear the ball first: dribble it out beyond the arc, or hit a
     // teammate already spotted up outside for the quick three look.
@@ -1026,8 +1067,9 @@ export default function GameLoop() {
       return
     }
 
-    // Attack the rim
-    if (d < 2.5 && !G.mustClear) {
+    // Right at the rim everyone finishes strong, but only committed
+    // drivers hunt this spot on purpose.
+    if (d < 2.5 && !G.mustClear && (p.aiPlan === 'drive' || d < 1.9)) {
       startDunk(p)
       return
     }
@@ -1044,15 +1086,106 @@ export default function GameLoop() {
       }
     }
 
-    if (p.aiTimer <= 0) {
-      // Open jumper (with style detection: fadeaways / floaters)
-      if (defDist > 1.8 && d < 8) {
+    // ----- Plan: hunt a pull-up three -----
+    if (p.aiPlan === 'pull3') {
+      const beyondArc = d > THREE_PT_RADIUS + 0.25
+      // Open look from deep: let it fly
+      if (beyondArc && defDist > 1.5 && p.aiTimer <= 0) {
+        p.vel.multiplyScalar(0.3)
+        beginShotRise(p)
+        setMessage('FOR THREE!', 0.9)
+        return
+      }
+      // Crowded at the arc: create space with a step-back three
+      if (beyondArc && defDist < 1.1 && p.aiTimer <= 0 && Math.random() < 0.5) {
+        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        p.vel.x = V2.x * 3.0
+        p.vel.z = V2.z * 3.0
+        p.speed = 3.0
+        beginShotRise(p)
+        setMessage('STEP-BACK THREE!', 1.0)
+        return
+      }
+      // Not behind the line yet: dribble out to a spot on the arc
+      if (!beyondArc) {
+        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        V3.copy(RIM_GROUND).addScaledVector(V2, THREE_PT_RADIUS + 0.7)
+        clampCourt(V3, 0.6)
+        steerToward(p, V3, 5.8, 9, dt, 0.3)
+        if (p.grounded) p.anim = 'run'
+        return
+      }
+      // Behind the arc but smothered too long: bail out of the plan
+      if (p.aiTimer <= -1.2) {
+        if (openMate && bestOpen > 2.0) {
+          tryPass(p, openMate.id)
+          return
+        }
+        p.aiPlan = Math.random() < 0.5 ? 'drive' : 'midpull'
+        p.aiTimer = 0.4 + Math.random() * 0.5
+      }
+      // Shuffle along the arc waiting for a window
+      const side = Math.sin(G.time * 1.7 + p.id) > 0 ? 1 : -1
+      V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+      applyMove(p, V2.z * side * 0.8, -V2.x * side * 0.8, 3.4, 8, dt)
+      if (p.grounded) p.anim = 'run'
+      return
+    }
+
+    // ----- Plan: mid-range pull-up -----
+    if (p.aiPlan === 'midpull') {
+      const inMidRange = d > 3.0 && d < 5.8
+      if (inMidRange && defDist > 1.4 && p.aiTimer <= 0) {
+        p.vel.multiplyScalar(0.3)
+        beginShotRise(p)
+        setMessage('PULL-UP JUMPER!', 0.9)
+        return
+      }
+      // Contested in the mid post: rise for the tough fadeaway
+      if (inMidRange && defDist < 1.2 && p.aiTimer <= 0 && Math.random() < 0.4) {
+        V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        p.vel.x = V2.x * 2.6
+        p.vel.z = V2.z * 2.6
+        p.speed = 2.6
         beginShotRise(p)
         return
       }
-      // Contested mid-range: sometimes rise for a tough fadeaway anyway
-      if (defDist < 1.2 && d < 6 && d > 2.7 && Math.random() < 0.25) {
+      // Work toward the elbow / short wing
+      if (!inMidRange) {
         V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+        V3.copy(RIM_GROUND).addScaledVector(V2, 4.4)
+        clampCourt(V3, 0.6)
+        steerToward(p, V3, 5.4, 9, dt, 0.3)
+        if (p.grounded) p.anim = 'run'
+        return
+      }
+      // Stuck too long: kick out or switch plans
+      if (p.aiTimer <= -1.4) {
+        if (openMate && bestOpen > 2.0) {
+          tryPass(p, openMate.id)
+          return
+        }
+        p.aiPlan = 'drive'
+        p.aiTimer = 0.3
+      }
+      // Jab-step dance in the mid post
+      const side = Math.sin(G.time * 2.4 + p.id * 1.7) > 0 ? 1 : -1
+      V2.copy(p.pos).sub(RIM_GROUND).setY(0).normalize()
+      applyMove(p, V2.z * side * 0.7, -V2.x * side * 0.7, 3.0, 8, dt)
+      if (p.grounded) p.anim = 'run'
+      return
+    }
+
+    // ----- Plan: probe (patient) or drive (downhill) -----
+    if (p.aiTimer <= 0) {
+      // Open jumper opportunistically even while driving
+      if (defDist > 1.8 && d < 8 && Math.random() < 0.5) {
+        beginShotRise(p)
+        return
+      }
+      // Short floater over collapsing help defense
+      if (p.aiPlan === 'drive' && d < 4.6 && d > 2.7 && defDist < 1.3 && Math.random() < 0.35) {
+        V2.copy(RIM_GROUND).sub(p.pos).setY(0).normalize()
         p.vel.x = V2.x * 2.6
         p.vel.z = V2.z * 2.6
         p.speed = 2.6
@@ -1064,6 +1197,11 @@ export default function GameLoop() {
         tryPass(p, openMate.id)
         p.aiTimer = 1.6 + Math.random() * 1.5
         return
+      }
+      // Probing possessions eventually commit to something
+      if (p.aiPlan === 'probe') {
+        p.aiPlan = pickPlan(p)
+        if (p.aiPlan === 'probe') p.aiPlan = 'drive'
       }
       // Otherwise reset the clock and keep working
       p.aiTimer = 1.2 + Math.random() * 1.4

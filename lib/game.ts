@@ -55,6 +55,16 @@ export interface PlayerLook {
   number: number // jersey number 0-99
 }
 
+// How an AI player likes to score. Probability weights, not hard rules.
+export interface ShotTendency {
+  three: number // loves pulling up from deep
+  mid: number // mid-range pull-up game
+  drive: number // attacks the rim for dunks / floaters
+}
+
+// What the AI ball handler decided to do this possession
+export type AIPlan = 'drive' | 'pull3' | 'midpull' | 'probe'
+
 export interface PlayerData {
   id: number
   team: 0 | 1
@@ -87,6 +97,9 @@ export interface PlayerData {
   trailing: boolean // defender got beaten and is sprinting to recover
   colors: { jersey: string; shorts: string; skin: string; hair: string }
   look: PlayerLook
+  tendency: ShotTendency
+  aiPlan: AIPlan
+  aiPlanFresh: boolean // set when a new plan is picked (handler resets timers)
 }
 
 export type BallState = 'held' | 'shot' | 'pass' | 'loose' | 'dunk'
@@ -155,6 +168,19 @@ const LOOKS: PlayerLook[] = [
   { h: 0.94, w: 0.92, hair: 'curls', headband: false, sleeve: 'right', legSleeve: false, number: 23 },
 ]
 
+// Matches LOOKS by id: the small guards are shooters, the bigs are rim
+// runners, the wings are balanced. Weights are relative, not percentages.
+const TENDENCIES: ShotTendency[] = [
+  // Team 0 - blue
+  { three: 0.45, mid: 0.3, drive: 0.25 }, // #1  sharpshooting guard
+  { three: 0.1, mid: 0.2, drive: 0.7 }, // #34 big man - lives at the rim
+  { three: 0.3, mid: 0.4, drive: 0.3 }, // #7  mid-range wing
+  // Team 1 - red
+  { three: 0.5, mid: 0.25, drive: 0.25 }, // #0  deep-range gunner
+  { three: 0.08, mid: 0.22, drive: 0.7 }, // #55 bruiser - dunks only
+  { three: 0.35, mid: 0.35, drive: 0.3 }, // #23 smooth all-around scorer
+]
+
 function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
   return {
     id,
@@ -188,6 +214,9 @@ function makePlayer(id: number, team: 0 | 1, x: number, z: number): PlayerData {
     trailing: false,
     colors: team === 0 ? TEAM0[id % 3] : TEAM1[id % 3],
     look: LOOKS[id % LOOKS.length],
+    tendency: TENDENCIES[id % TENDENCIES.length],
+    aiPlan: 'probe',
+    aiPlanFresh: false,
   }
 }
 
