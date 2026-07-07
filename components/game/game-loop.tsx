@@ -1962,11 +1962,27 @@ export default function GameLoop() {
     // Zoom punch-in near the rim, slight wide-angle on fast breaks;
     // defense keeps a steady wider lens.
     const cam = camera as THREE.PerspectiveCamera
-    const targetFov = defending
+    let targetFov = defending
       ? full
         ? 55
         : 53
       : (full ? 53 : 50) - rimT * 6 + speedT * 2
+
+    // PORTRAIT COMPENSATION: three.js fov is VERTICAL, so on a tall phone
+    // screen the horizontal view collapses and the court gets cropped.
+    // Widen the vertical fov to preserve the same horizontal field of view
+    // as a 1.6:1 (landscape) screen.
+    const refAspect = 1.6
+    if (cam.aspect < refAspect) {
+      const vRad = THREE.MathUtils.degToRad(targetFov) / 2
+      const compensated =
+        2 *
+        THREE.MathUtils.radToDeg(
+          Math.atan(Math.tan(vRad) * (refAspect / cam.aspect)),
+        )
+      targetFov = Math.min(compensated, 100)
+    }
+
     if (Math.abs(cam.fov - targetFov) > 0.05) {
       cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-4 * dt))
       cam.updateProjectionMatrix()

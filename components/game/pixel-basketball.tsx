@@ -19,7 +19,7 @@ export default function PixelBasketball() {
     (_, i) => i,
   )
   return (
-    <div className="relative h-screen w-full">
+    <div className="relative h-dvh w-full">
       <Canvas
         dpr={0.8}
         camera={{ position: [0, 8, 14], fov: 50 }}
