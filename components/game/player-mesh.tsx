@@ -3,7 +3,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { G, STUN_TIME, DUNK_DUR } from '@/lib/game'
+import { G, STUN_TIME, DUNK_DUR, addFx } from '@/lib/game'
 
 interface Props {
   id: number
@@ -23,7 +23,15 @@ const DIGITS: Record<string, number[]> = {
   '9': [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1],
 }
 
-function JerseyNumber({ n, z }: { n: number; z: number }) {
+function JerseyNumber({
+  n,
+  z,
+  color = '#f8fafc',
+}: {
+  n: number
+  z: number
+  color?: string
+}) {
   const px = 0.034
   const str = String(n)
   const pixels = useMemo(() => {
@@ -50,7 +58,7 @@ function JerseyNumber({ n, z }: { n: number; z: number }) {
       {pixels.map(([x, y], i) => (
         <mesh key={i} position={[x, y, 0]}>
           <boxGeometry args={[px, px, 0.012]} />
-          <meshBasicMaterial color="#f8fafc" />
+          <meshBasicMaterial color={color} />
         </mesh>
       ))}
     </group>
@@ -188,6 +196,7 @@ export default function PlayerMesh({ id }: Props) {
   const wasGrounded = useRef(true)
   const landT = useRef(0)
   const landPower = useRef(0)
+  const dustT = useRef(0)
 
   const p = G.players[id]
   const c = p.colors
@@ -210,14 +219,22 @@ export default function PlayerMesh({ id }: Props) {
     const runPhase = t * 11
     const runAmt = Math.min(pl.speed / 4.5, 1.4)
 
-    // Landing detection -> squash impulse + knee absorb
+    // Landing detection -> squash impulse + knee absorb + dust puff
     if (!wasGrounded.current && pl.grounded) {
       landT.current = 0.22
       landPower.current = 1
+      addFx('land', pl.pos)
     }
     wasGrounded.current = pl.grounded
     if (landT.current > 0) landT.current -= dt
     const land = Math.max(0, landT.current / 0.22) * landPower.current
+
+    // Sprint dust: fast grounded movement kicks up little puffs at the heels
+    dustT.current -= dt
+    if (pl.grounded && pl.speed > 4.6 && dustT.current <= 0) {
+      dustT.current = 0.14
+      addFx('dust', pl.pos)
+    }
 
     const P = zeroPose()
     const hasBall = G.ball.state === 'held' && G.ball.holder === id
@@ -769,23 +786,23 @@ export default function PlayerMesh({ id }: Props) {
           {/* Jersey side stripes */}
           <mesh position={[-0.255, 1.06, 0]}>
             <boxGeometry args={[0.015, 0.32, 0.29]} />
-            <meshLambertMaterial color="#f8fafc" />
+            <meshLambertMaterial color={c.trim} />
           </mesh>
           <mesh position={[0.255, 1.06, 0]}>
             <boxGeometry args={[0.015, 0.32, 0.29]} />
-            <meshLambertMaterial color="#f8fafc" />
+            <meshLambertMaterial color={c.trim} />
           </mesh>
           {/* Jersey neckline trim */}
           <mesh position={[0, 1.38, 0.06]}>
             <boxGeometry args={[0.2, 0.05, 0.2]} />
-            <meshLambertMaterial color="#f8fafc" />
+            <meshLambertMaterial color={c.trim} />
           </mesh>
           {/* Pixel jersey number on the chest */}
-          <JerseyNumber n={look.number} z={0.155} />
+          <JerseyNumber n={look.number} z={0.155} color={c.trim} />
           {/* Jersey bottom trim */}
           <mesh position={[0, 0.8, 0]}>
             <boxGeometry args={[0.45, 0.05, 0.27]} />
-            <meshLambertMaterial color="#f8fafc" />
+            <meshLambertMaterial color={c.trim} />
           </mesh>
           {/* Shorts */}
           <mesh position={[0, 0.68, 0]}>
@@ -795,7 +812,7 @@ export default function PlayerMesh({ id }: Props) {
           {/* Shorts side stripe */}
           <mesh position={[0, 0.59, 0]}>
             <boxGeometry args={[0.51, 0.04, 0.31]} />
-            <meshLambertMaterial color="#f8fafc" />
+            <meshLambertMaterial color={c.trim} />
           </mesh>
 
           {/* Neck */}

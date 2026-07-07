@@ -3,7 +3,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { RIM, type GameMode } from '@/lib/game'
+import { RIM, PAINT, useHud, type GameMode, type MapId } from '@/lib/game'
 
 const LINE_COLOR = '#f8fafc'
 const LINE_Y = 0.02
@@ -22,6 +22,22 @@ const PLANK_TONES = [
   '#b8743a',
   '#ca8643',
   '#bf7c3e',
+]
+
+// Painted concrete tones for the outdoor park court (green street court)
+const PARK_TONES = [
+  '#2e7d54',
+  '#2a7650',
+  '#317f57',
+  '#2c7952',
+  '#348258',
+  '#2a7650',
+  '#2f7c55',
+  '#2c7852',
+  '#328057',
+  '#297450',
+  '#307d55',
+  '#2d7a53',
 ]
 
 function Line({
@@ -80,8 +96,15 @@ function EndMarkings() {
   )
 }
 
-export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
+export default function Court({
+  mode = '3v3',
+  map = 'city',
+}: {
+  mode?: GameMode
+  map?: MapId
+}) {
   const full = mode === '5v5'
+  const park = map === 'park'
   // Floor footprint: half court is offset toward -z, full court is centered
   // The 5v5 court is LARGER: baskets at +-11.9, baselines at +-13.9
   const floorLen = full ? 29.4 : 16.4
@@ -92,26 +115,28 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
   const plankCount = full ? 14 : 12
   const plankStart = full ? -10.5 : -8.25
   const seamW = full ? 19.5 : 16.5
+  const tones = park ? PARK_TONES : PLANK_TONES
 
   return (
     <group>
-      {/* Asphalt around */}
+      {/* Ground around the court: asphalt at night, grass in the park */}
       <mesh
         position={[0, -0.06, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
         <planeGeometry args={[80, 80]} />
-        <meshLambertMaterial color="#2b3648" />
+        <meshLambertMaterial color={park ? '#4d8b3f' : '#2b3648'} />
       </mesh>
 
       {/* Court apron (colored border band) */}
       <mesh position={[0, -0.01, floorZ]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[full ? 23.5 : 20.5, floorLen + 3.2]} />
-        <meshLambertMaterial color="#14532d" />
+        <meshLambertMaterial color={park ? '#1d4ed8' : '#14532d'} />
       </mesh>
 
-      {/* Wooden court - plank strips with subtle tone variation */}
+      {/* Court surface - strips with subtle tone variation
+          (wood parquet in the city, painted concrete in the park) */}
       {Array.from({ length: plankCount }).map((_, i) => (
         <mesh
           key={i}
@@ -120,10 +145,10 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
           receiveShadow
         >
           <planeGeometry args={[1.5, floorLen]} />
-          <meshLambertMaterial color={PLANK_TONES[i % PLANK_TONES.length]} />
+          <meshLambertMaterial color={tones[i % tones.length]} />
         </mesh>
       ))}
-      {/* Plank seams (horizontal breaks for a real parquet feel) */}
+      {/* Seams (horizontal breaks - parquet joints / concrete expansion cuts) */}
       {seams.map((z, i) => (
         <mesh
           key={`seam${i}`}
@@ -131,9 +156,12 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
           rotation={[-Math.PI / 2, 0, 0]}
         >
           <planeGeometry args={[seamW, 0.04]} />
-          <meshBasicMaterial color="#a4692f" />
+          <meshBasicMaterial color={park ? '#256a47' : '#a4692f'} />
         </mesh>
       ))}
+
+      {/* Custom user paint layer (drawn in the pre-game court painter) */}
+      <PaintOverlay full={full} floorZ={floorZ} floorLen={floorLen} />
 
       {full ? (
         <>
@@ -218,8 +246,40 @@ export default function Court({ mode = '3v3' }: { mode?: GameMode }) {
         </>
       )}
 
-      <Environment full={full} />
+      {park ? <ParkEnvironment full={full} /> : <Environment full={full} />}
     </group>
+  )
+}
+
+// Transparent plane just above the floor carrying the user's custom paint
+function PaintOverlay({
+  full,
+  floorZ,
+  floorLen,
+}: {
+  full: boolean
+  floorZ: number
+  floorLen: number
+}) {
+  const paintVersion = useHud((s) => s.paintVersion)
+  const texture = useMemo(() => {
+    if (!PAINT.canvas || paintVersion === 0) return null
+    const tex = new THREE.CanvasTexture(PAINT.canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.magFilter = THREE.NearestFilter
+    return tex
+  }, [paintVersion])
+  if (!texture) return null
+  return (
+    <mesh position={[0, 0.008, floorZ]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[full ? 19 : 16.9, floorLen]} />
+      <meshBasicMaterial
+        map={texture}
+        transparent
+        opacity={0.92}
+        depthWrite={false}
+      />
+    </mesh>
   )
 }
 
@@ -868,6 +928,194 @@ function Environment({ full = false }: { full?: boolean }) {
       <Floodlight x={full ? 12.5 : 11} z={6 + zOff * 1.35} />
       <Floodlight x={full ? -12.5 : -11} z={full ? -16 : -13} />
       <Floodlight x={full ? 12.5 : 11} z={full ? -16 : -13} />
+    </group>
+  )
+}
+
+// ---------- Sunny park map: daytime, grass, trees, hills ----------
+function Bush({ x, z, s = 1 }: { x: number; z: number; s?: number }) {
+  return (
+    <group position={[x, 0, z]} scale={s}>
+      <mesh position={[0, 0.45, 0]}>
+        <boxGeometry args={[1.2, 0.9, 1.1]} />
+        <meshLambertMaterial color="#2f7d3c" />
+      </mesh>
+      <mesh position={[0.35, 0.85, 0.15]}>
+        <boxGeometry args={[0.6, 0.5, 0.6]} />
+        <meshLambertMaterial color="#3c9349" />
+      </mesh>
+    </group>
+  )
+}
+
+function Flowers({ x, z }: { x: number; z: number }) {
+  const petals = ['#f472b6', '#fde047', '#f8fafc', '#fb923c']
+  return (
+    <group position={[x, 0, z]}>
+      {petals.map((c, i) => (
+        <mesh
+          key={i}
+          position={[((i % 2) - 0.5) * 0.5, 0.18, (Math.floor(i / 2) - 0.5) * 0.5]}
+        >
+          <boxGeometry args={[0.16, 0.36, 0.16]} />
+          <meshLambertMaterial color={c} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function Hill({ x, z, w, h }: { x: number; z: number; w: number; h: number }) {
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, h / 2, 0]}>
+        <boxGeometry args={[w, h, 4]} />
+        <meshLambertMaterial color="#5a9c4a" />
+      </mesh>
+      <mesh position={[0, h + 0.4, 0]}>
+        <boxGeometry args={[w * 0.55, 1.2, 3.6]} />
+        <meshLambertMaterial color="#68ab55" />
+      </mesh>
+    </group>
+  )
+}
+
+function ParkEnvironment({ full = false }: { full?: boolean }) {
+  const zOff = full ? 7.5 : 0
+  const sideX = full ? 13.8 : 12.5
+  return (
+    <group>
+      {/* Small park bleachers with fans */}
+      <Crowd
+        position={[-sideX, 0, full ? 0 : -3.5]}
+        rotation={Math.PI / 2}
+        rows={2}
+        cols={full ? 20 : 12}
+      />
+      <Crowd
+        position={[sideX, 0, full ? 0 : -3.5]}
+        rotation={-Math.PI / 2}
+        rows={2}
+        cols={full ? 20 : 12}
+      />
+
+      {/* Low park fence behind the court */}
+      {Array.from({ length: 13 }).map((_, i) => (
+        <mesh key={`fp${i}`} position={[-18 + i * 3, 0.9, 9 + zOff]}>
+          <boxGeometry args={[0.14, 1.8, 0.14]} />
+          <meshLambertMaterial color="#166534" />
+        </mesh>
+      ))}
+      {[0.6, 1.4].map((y, i) => (
+        <mesh key={`fr${i}`} position={[0, y, 9 + zOff]}>
+          <boxGeometry args={[36, 0.1, 0.1]} />
+          <meshLambertMaterial color="#15803d" />
+        </mesh>
+      ))}
+
+      {/* Dirt walking path around the +z side */}
+      <mesh
+        position={[0, -0.045, 11.5 + zOff]}
+        rotation={[-Math.PI / 2, 0, 0]}
+      >
+        <planeGeometry args={[46, 2.6]} />
+        <meshLambertMaterial color="#b0906a" />
+      </mesh>
+
+      {/* Rolling hills on the horizon */}
+      <Hill x={-20} z={-30} w={26} h={5} />
+      <Hill x={8} z={-33} w={30} h={7} />
+      <Hill x={30} z={-29} w={22} h={4.5} />
+      <Hill x={-28} z={16 + zOff} w={20} h={4} />
+      <Hill x={24} z={18 + zOff} w={26} h={6} />
+
+      {/* Lots of trees - a real green park */}
+      <Tree x={-14} z={6.5 + zOff} s={1.3} />
+      <Tree x={-17} z={-2} s={1.5} />
+      <Tree x={-16} z={-9} s={1.1} />
+      <Tree x={-20} z={4} s={1.7} />
+      <Tree x={16} z={5 + zOff} s={1.4} />
+      <Tree x={18} z={-4} s={1.6} />
+      <Tree x={17} z={-11} s={1.2} />
+      <Tree x={21} z={1} s={1.8} />
+      <Tree x={-12} z={12 + zOff} s={1.2} />
+      <Tree x={12} z={13 + zOff} s={1.5} />
+      <Tree x={-4} z={14 + zOff} s={1.1} />
+      <Tree x={5} z={13.5 + zOff} s={1.3} />
+      <Tree x={-10} z={full ? -19 : -16} s={1.4} />
+      <Tree x={10} z={full ? -20 : -17} s={1.6} />
+      <Tree x={0} z={full ? -21 : -18} s={1.2} />
+      <Tree x={-24} z={-14} s={2} />
+      <Tree x={25} z={-15} s={1.9} />
+
+      {/* Bushes and flower patches tucked around the court */}
+      <Bush x={-13} z={2} s={1.2} />
+      <Bush x={13.5} z={-7} s={1} />
+      <Bush x={-14} z={-12} s={1.3} />
+      <Bush x={14} z={9 + zOff} s={1.1} />
+      <Bush x={-9} z={10.5 + zOff} s={0.9} />
+      <Bush x={8} z={10.5 + zOff} s={1.2} />
+      <Flowers x={-11} z={7.8 + zOff} />
+      <Flowers x={11.5} z={6.8 + zOff} />
+      <Flowers x={-15.5} z={-5.5} />
+      <Flowers x={16} z={0.5} />
+
+      {/* Park benches */}
+      <Bench x={full ? -11.8 : -10.6} z={2} rot={Math.PI / 2} />
+      <Bench x={full ? 11.8 : 10.6} z={-8.5} rot={-Math.PI / 2} />
+      <Bench x={-5} z={10.2 + zOff} rot={Math.PI} />
+      <Bench x={5} z={10.2 + zOff} rot={Math.PI} />
+
+      {/* Bright pixel sun with rays */}
+      <group position={[-16, 24, -38]}>
+        <mesh>
+          <boxGeometry args={[3.4, 3.4, 0.2]} />
+          <meshBasicMaterial color="#fde047" />
+        </mesh>
+        <mesh position={[0, 0, 0.05]}>
+          <boxGeometry args={[5, 5, 0.1]} />
+          <meshBasicMaterial color="#fef08a" transparent opacity={0.35} />
+        </mesh>
+        {[0, Math.PI / 4].map((r, i) => (
+          <mesh key={i} rotation={[0, 0, r]} position={[0, 0, -0.05]}>
+            <boxGeometry args={[7.4, 0.5, 0.1]} />
+            <meshBasicMaterial color="#fde047" transparent opacity={0.6} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Fluffy white daytime clouds */}
+      {[
+        [-22, 18, -34, 6],
+        [2, 21, -37, 8],
+        [20, 16, -33, 5],
+        [-8, 19, -36, 7],
+        [14, 22, 30 + zOff, 6],
+        [-18, 17, 28 + zOff, 5],
+      ].map(([x, y, z, w], i) => (
+        <group key={`cl${i}`} position={[x, y, z]}>
+          <mesh>
+            <boxGeometry args={[w, 1.4, 0.3]} />
+            <meshBasicMaterial color="#f8fafc" />
+          </mesh>
+          <mesh position={[w * 0.18, 1, 0]}>
+            <boxGeometry args={[w * 0.55, 1.1, 0.3]} />
+            <meshBasicMaterial color="#e2e8f0" />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Kite stuck in a tree - park life detail */}
+      <group position={[18.2, 4.6, -4]}>
+        <mesh rotation={[0, 0, Math.PI / 4]}>
+          <boxGeometry args={[0.9, 0.9, 0.06]} />
+          <meshLambertMaterial color="#ef4444" />
+        </mesh>
+        <mesh position={[0.3, -0.7, 0]} rotation={[0, 0, 0.5]}>
+          <boxGeometry args={[0.05, 1.2, 0.05]} />
+          <meshBasicMaterial color="#f8fafc" />
+        </mesh>
+      </group>
     </group>
   )
 }

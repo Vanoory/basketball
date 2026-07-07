@@ -22,6 +22,57 @@ export const WIN_SCORE = 21
 // ---------- Game modes ----------
 export type GameMode = '3v3' | '5v5'
 
+// ---------- Maps ----------
+export type MapId = 'park' | 'city'
+export const MAPS: { id: MapId; name: string; desc: string }[] = [
+  { id: 'park', name: 'SUNNY PARK', desc: 'DAYTIME - TREES AND GRASS' },
+  { id: 'city', name: 'NIGHT CITY', desc: 'STREETBALL UNDER THE LIGHTS' },
+]
+
+// ---------- Jersey kits ----------
+export interface JerseyKit {
+  name: string
+  jersey: string
+  shorts: string
+  trim: string
+}
+export const JERSEY_KITS: JerseyKit[] = [
+  { name: 'ROYAL BLUE', jersey: '#3b82f6', shorts: '#1d4ed8', trim: '#f8fafc' },
+  { name: 'FIRE RED', jersey: '#ef4444', shorts: '#b91c1c', trim: '#f8fafc' },
+  { name: 'CELTIC GREEN', jersey: '#16a34a', shorts: '#15803d', trim: '#fde047' },
+  { name: 'LAKE GOLD', jersey: '#eab308', shorts: '#a16207', trim: '#7c3aed' },
+  { name: 'ICE WHITE', jersey: '#f1f5f9', shorts: '#cbd5e1', trim: '#0f172a' },
+  { name: 'BLACKOUT', jersey: '#1e293b', shorts: '#0f172a', trim: '#f97316' },
+  { name: 'PURPLE REIGN', jersey: '#7c3aed', shorts: '#5b21b6', trim: '#fde047' },
+  { name: 'MIAMI PINK', jersey: '#ec4899', shorts: '#be185d', trim: '#22d3ee' },
+]
+
+// Pre-game selections. HUD writes these before setGameMode() is called.
+export const SETTINGS = {
+  map: 'city' as MapId,
+  kit0: 0, // index into JERSEY_KITS for team 0 (you)
+  kit1: 1, // index into JERSEY_KITS for team 1 (cpu)
+}
+
+// ---------- Court paint (custom user drawing overlaid on the floor) ----------
+export const PAINT: { canvas: HTMLCanvasElement | null; version: number } = {
+  canvas: null,
+  version: 0,
+}
+
+// ---------- FX event bus (game loop -> particle effects) ----------
+export type FxType = 'dunk' | 'score' | 'score3' | 'land' | 'dust' | 'ankle' | 'block'
+export interface FxEvent {
+  type: FxType
+  pos: THREE.Vector3
+  color?: string
+}
+export const FX: { queue: FxEvent[] } = { queue: [] }
+export function addFx(type: FxType, pos: THREE.Vector3, color?: string) {
+  if (FX.queue.length > 32) return
+  FX.queue.push({ type, pos: pos.clone(), color })
+}
+
 // In 3v3 both teams attack the single half-court rim.
 // In 5v5 team 0 attacks the -z rim (RIM), team 1 attacks the +z rim (RIM_B).
 export function attackRim(mode: GameMode, team: 0 | 1) {
@@ -119,7 +170,7 @@ export interface PlayerData {
   helpDef: boolean // temporarily rotating onto ball handler
   screenedT: number // > 0 => caught on a screen / body, slowed down
   trailing: boolean // defender got beaten and is sprinting to recover
-  colors: { jersey: string; shorts: string; skin: string; hair: string }
+  colors: { jersey: string; shorts: string; trim: string; skin: string; hair: string }
   look: PlayerLook
   tendency: ShotTendency
   aiPlan: AIPlan
@@ -170,20 +221,20 @@ export interface GameData {
 }
 
 // ---------- Factory ----------
-// 5 color kits per team - 3v3 uses the first 3, 5v5 uses all 5
-const TEAM0 = [
-  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#c68642', hair: '#1c1917' },
-  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#f1c27d', hair: '#78350f' },
-  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#8d5524', hair: '#0c0a09' },
-  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#e0ac69', hair: '#292524' },
-  { jersey: '#3b82f6', shorts: '#1d4ed8', skin: '#8d5524', hair: '#3f2c1a' },
+// Skin/hair identity per team slot - jersey/shorts come from the chosen kit
+const BODIES0 = [
+  { skin: '#c68642', hair: '#1c1917' },
+  { skin: '#f1c27d', hair: '#78350f' },
+  { skin: '#8d5524', hair: '#0c0a09' },
+  { skin: '#e0ac69', hair: '#292524' },
+  { skin: '#8d5524', hair: '#3f2c1a' },
 ]
-const TEAM1 = [
-  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#f1c27d', hair: '#facc15' },
-  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#8d5524', hair: '#1c1917' },
-  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#c68642', hair: '#44403c' },
-  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#e0ac69', hair: '#0c0a09' },
-  { jersey: '#ef4444', shorts: '#b91c1c', skin: '#f1c27d', hair: '#57534e' },
+const BODIES1 = [
+  { skin: '#f1c27d', hair: '#facc15' },
+  { skin: '#8d5524', hair: '#1c1917' },
+  { skin: '#c68642', hair: '#44403c' },
+  { skin: '#e0ac69', hair: '#0c0a09' },
+  { skin: '#f1c27d', hair: '#57534e' },
 ]
 
 // Each player gets his own silhouette, hair, and gear so nobody looks
@@ -251,7 +302,17 @@ function makePlayer(id: number, team: 0 | 1, slot: number, x: number, z: number)
     helpDef: false,
     screenedT: 0,
     trailing: false,
-    colors: team === 0 ? TEAM0[slot % 5] : TEAM1[slot % 5],
+    colors: (() => {
+      const kit = JERSEY_KITS[team === 0 ? SETTINGS.kit0 : SETTINGS.kit1]
+      const body = team === 0 ? BODIES0[slot % 5] : BODIES1[slot % 5]
+      return {
+        jersey: kit.jersey,
+        shorts: kit.shorts,
+        trim: kit.trim,
+        skin: body.skin,
+        hair: body.hair,
+      }
+    })(),
     look: team === 0 ? LOOKS0[slot % 5] : LOOKS1[slot % 5],
     tendency: team === 0 ? TENDENCIES0[slot % 5] : TENDENCIES1[slot % 5],
     aiPlan: 'probe',
@@ -369,6 +430,8 @@ interface HudState {
   winner: 0 | 1
   started: boolean
   mode: GameMode
+  map: MapId
+  paintVersion: number
   setHud: (p: Partial<HudState>) => void
 }
 
@@ -383,5 +446,7 @@ export const useHud = create<HudState>((set) => ({
   winner: 0,
   started: false,
   mode: '3v3',
+  map: 'city',
+  paintVersion: 0,
   setHud: (p) => set(p),
 }))

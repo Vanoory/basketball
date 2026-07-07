@@ -17,6 +17,7 @@ import {
   isThree,
   rimOf,
   rimGroundOf,
+  addFx,
   useHud,
   THREE_PT_RADIUS,
   type PlayerData,
@@ -209,6 +210,7 @@ function knockDown(def: PlayerData, msg = 'ANKLES GONE!') {
   def.animT = 0
   def.vel.multiplyScalar(0.15)
   G.camShake = 0.25
+  addFx('ankle', V.set(def.pos.x, 1.6, def.pos.z))
   setMessage(msg, 1.6)
 }
 
@@ -352,6 +354,12 @@ function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
   if (scorer) {
     scorer.celebrateT = 1.3
   }
+  // Confetti burst at the rim in the scoring team's color
+  addFx(
+    points === 3 ? 'score3' : 'score',
+    rimOf(team),
+    scorer?.colors.jersey,
+  )
   if (G.scores[team] >= WIN_SCORE) {
     G.phase = 'over'
     setMessage(team === 0 ? 'YOU WIN!' : 'RED TEAM WINS!', 99)
@@ -532,7 +540,8 @@ function updateDunk(pl: PlayerData, dt: number) {
       b.holder = -1
       b.pos.set(rim.x, rim.y - 0.3, rim.z)
       b.vel.set(0, -4, 0.6 * inFront)
-      G.camShake = pl.dunkStyle >= 2 ? 0.45 : 0.35
+      G.camShake = pl.dunkStyle >= 2 ? 0.6 : 0.45
+      addFx('dunk', rim)
       scoreBasket(pl.team, 2, pl)
     }
   }
@@ -622,6 +631,7 @@ function rejectBall(p: PlayerData, msgUser: string, msgRed: string) {
   p.anim = 'block'
   p.animT = 0
   G.camShake = 0.32
+  addFx('block', b.pos)
   setMessage(p.team === 0 ? msgUser : msgRed, 1.6)
 }
 
