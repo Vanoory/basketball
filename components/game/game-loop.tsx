@@ -91,7 +91,8 @@ function applyMove(
   p.pos.z += p.vel.z * dt
   p.speed = Math.hypot(p.vel.x, p.vel.z)
   clampCourt(p.pos, 0.3)
-  if (p.speed > 0.6) {
+  // Don't let drift velocity spin the shooter away from the rim mid-shot
+  if (p.speed > 0.6 && p.anim !== 'shoot') {
     p.facing = Math.atan2(p.vel.x, p.vel.z)
   }
 }
@@ -261,6 +262,9 @@ function beginShotRise(p: PlayerData) {
   p.anim = 'shoot'
   p.animT = 0
   p.grounded = false
+  // Always square up to the rim - even on step-backs and fadeaways the
+  // shooter's chest turns toward the basket as he rises.
+  p.facing = Math.atan2(RIM_GROUND.x - p.pos.x, RIM_GROUND.z - p.pos.z)
   if (style === 1) {
     p.vy = 6.2
     p.vel.multiplyScalar(0.55) // keep drifting back - the fadeaway look
