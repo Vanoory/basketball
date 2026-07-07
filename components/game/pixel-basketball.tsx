@@ -21,9 +21,9 @@ export default function PixelBasketball() {
   return (
     <div className="relative h-dvh w-full">
       <Canvas
-        dpr={0.8}
+        dpr={[1, 2]}
         camera={{ position: [0, 8, 14], fov: 50 }}
-        gl={{ antialias: false }}
+        gl={{ antialias: true }}
         shadows
       >
         <color attach="background" args={[park ? '#7ec3e8' : '#0f1d33']} />

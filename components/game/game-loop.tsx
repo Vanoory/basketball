@@ -1890,12 +1890,24 @@ export default function GameLoop() {
     const ballSpeed = Math.hypot(b.vel.x, b.vel.z)
     const speedT = THREE.MathUtils.clamp(ballSpeed / 9, 0, 1)
 
+    // MOBILE: on narrow (portrait) screens pull the camera in closer so the
+    // players don't look tiny - scale distance & height down as the screen
+    // gets taller than it is wide.
+    const camAspect = (camera as THREE.PerspectiveCamera).aspect
+    const closeK =
+      camAspect < 1.2
+        ? THREE.MathUtils.clamp(1 - (1.2 - camAspect) * 0.28, 0.78, 1)
+        : 1
+
     // On defense stay higher & further back for full court vision - the
     // camera never dives behind the backboard.
-    const camH = defending
-      ? 9.2 - rimT * 0.7 + airT * 0.7
-      : 7.6 - rimT * 1.7 + airT * 0.9 + speedT * 0.5
-    const camDist = defending ? 12.8 - rimT * 1.1 : 11.4 - rimT * 2.6
+    const camH =
+      (defending
+        ? 9.2 - rimT * 0.7 + airT * 0.7
+        : 7.6 - rimT * 1.7 + airT * 0.9 + speedT * 0.5) *
+      (0.6 + closeK * 0.4)
+    const camDist =
+      (defending ? 12.8 - rimT * 1.1 : 11.4 - rimT * 2.6) * closeK
     // Subtle lateral orbit follows the ball side for a dynamic angle
     const orbit = defending ? 0 : THREE.MathUtils.clamp(fx * 0.1, -0.8, 0.8)
 
@@ -1903,8 +1915,9 @@ export default function GameLoop() {
       // 5v5 BROADCAST CAM: classic sideline view from the +x side so both
       // baskets stay readable as play flows end to end. Pulled higher and
       // further back for the larger court.
-      const sideH = 10.2 - rimT * 1.4 + airT * 0.9 + speedT * 0.6
-      const sideDist = 16.6 - rimT * 2.2 + speedT * 0.9
+      const sideH =
+        (10.2 - rimT * 1.4 + airT * 0.9 + speedT * 0.6) * (0.6 + closeK * 0.4)
+      const sideDist = (16.6 - rimT * 2.2 + speedT * 0.9) * closeK
       V.set(sideDist, sideH, fz * 0.78)
       V2.set(fx * 0.35 - 1.4, 0.9 + airT * 1.1, fz * 0.88)
     } else {
@@ -1972,7 +1985,9 @@ export default function GameLoop() {
     // screen the horizontal view collapses and the court gets cropped.
     // Widen the vertical fov to preserve the same horizontal field of view
     // as a 1.6:1 (landscape) screen.
-    const refAspect = 1.6
+    // A softer reference aspect keeps the view closer on phones - full
+    // 1.6 compensation made everything look far away in portrait.
+    const refAspect = 1.35
     if (cam.aspect < refAspect) {
       const vRad = THREE.MathUtils.degToRad(targetFov) / 2
       const compensated =
@@ -1980,7 +1995,7 @@ export default function GameLoop() {
         THREE.MathUtils.radToDeg(
           Math.atan(Math.tan(vRad) * (refAspect / cam.aspect)),
         )
-      targetFov = Math.min(compensated, 100)
+      targetFov = Math.min(compensated, 92)
     }
 
     if (Math.abs(cam.fov - targetFov) > 0.05) {
