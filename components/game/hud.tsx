@@ -11,6 +11,8 @@ import {
   type MapId,
 } from '@/lib/game'
 import CourtPainter from './court-painter'
+import TouchControls, { useIsTouchDevice } from './touch-controls'
+import { pushAction } from '@/lib/input'
 
 type Step = 'mode' | 'map' | 'kits' | 'paint'
 
@@ -29,6 +31,7 @@ export default function Hud() {
     setHud,
   } = useHud()
 
+  const isTouch = useIsTouchDevice()
   const [step, setStep] = useState<Step>('mode')
   const [pickedMode, setPickedMode] = useState<GameMode>('3v3')
   const [pickedMap, setPickedMap] = useState<MapId>('city')
@@ -139,24 +142,29 @@ export default function Hud() {
         </div>
       )}
 
-      {/* Controls hint */}
-      <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 whitespace-nowrap text-[8px] text-muted-foreground md:text-[10px]">
-        {[
-          ['WASD', 'MOVE'],
-          ['SHIFT', 'SPRINT'],
-          ['SPACE', 'SHOOT / DUNK / BLOCK'],
-          ['E', 'PASS / SWITCH'],
-          ['Q', 'STEAL'],
-        ].map(([keyName, action]) => (
-          <span
-            key={keyName}
-            className="flex items-center gap-1 border border-muted bg-background/70 px-1.5 py-0.5"
-          >
-            <span className="text-foreground">{keyName}</span>
-            <span>{action}</span>
-          </span>
-        ))}
-      </div>
+      {/* Touch controls: joystick + action buttons on phones/tablets */}
+      {isTouch && started && !over && <TouchControls />}
+
+      {/* Controls hint (hidden on touch devices - buttons are on screen) */}
+      {!isTouch && (
+        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 whitespace-nowrap text-[8px] text-muted-foreground md:text-[10px]">
+          {[
+            ['WASD / STICK', 'MOVE'],
+            ['SHIFT / RT', 'SPRINT'],
+            ['SPACE / A', 'SHOOT / DUNK / BLOCK'],
+            ['E / X', 'PASS / SWITCH'],
+            ['Q / B', 'STEAL'],
+          ].map(([keyName, action]) => (
+            <span
+              key={keyName}
+              className="flex items-center gap-1 border border-muted bg-background/70 px-1.5 py-0.5"
+            >
+              <span className="text-foreground">{keyName}</span>
+              <span>{action}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* ---------- Pre-game setup flow ---------- */}
       {!started && step === 'mode' && (
@@ -167,9 +175,21 @@ export default function Hud() {
           <p className="text-sm text-accent md:text-lg">PICK YOUR GAME</p>
           <div className="flex max-w-md flex-col gap-2 text-[10px] leading-relaxed text-muted-foreground md:text-xs">
             <p>FIRST TO 21 WINS. 2 PTS INSIDE, 3 PTS BEYOND THE ARC.</p>
-            <p>HOLD SPACE TO JUMP SHOT - RELEASE IN THE GREEN ZONE.</p>
-            <p>SPRINT TO THE RIM + SPACE = DUNK.</p>
-            <p>ON DEFENSE: E SWITCHES PLAYERS, Q POKES THE BALL, SPACE BLOCKS.</p>
+            {isTouch ? (
+              <>
+                <p>HOLD SHOOT FOR A JUMPER - RELEASE IN THE GREEN ZONE.</p>
+                <p>RUN TO THE RIM + SHOOT = DUNK.</p>
+                <p>DEFENSE: PASS SWITCHES PLAYERS, STEAL POKES, SHOOT BLOCKS.</p>
+                <p>GAMEPADS WORK TOO: A SHOOT, X PASS, B STEAL, RT SPRINT.</p>
+              </>
+            ) : (
+              <>
+                <p>HOLD SPACE TO JUMP SHOT - RELEASE IN THE GREEN ZONE.</p>
+                <p>SPRINT TO THE RIM + SPACE = DUNK.</p>
+                <p>ON DEFENSE: E SWITCHES PLAYERS, Q POKES THE BALL, SPACE BLOCKS.</p>
+                <p>GAMEPAD: A SHOOT, X PASS, B STEAL, RT SPRINT, STICK MOVES.</p>
+              </>
+            )}
           </div>
           <div className="flex flex-col items-center gap-4 md:flex-row">
             <button
@@ -335,15 +355,24 @@ export default function Hud() {
             {scores[0]} - {scores[1]}
           </p>
           <p className="text-xs text-muted-foreground md:text-sm">
-            PRESS ENTER TO PLAY AGAIN
+            {isTouch ? 'TAP PLAY AGAIN' : 'PRESS ENTER / START TO PLAY AGAIN'}
           </p>
-          <button
-            type="button"
-            onClick={backToMenu}
-            className="border-4 border-muted bg-muted px-6 py-3 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105 md:text-sm"
-          >
-            MAIN MENU
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => pushAction('restart')}
+              className="border-4 border-primary bg-primary px-6 py-3 text-xs text-primary-foreground shadow-[4px_4px_0_#7c2d12] transition-transform hover:scale-105 md:text-sm"
+            >
+              PLAY AGAIN
+            </button>
+            <button
+              type="button"
+              onClick={backToMenu}
+              className="border-4 border-muted bg-muted px-6 py-3 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105 md:text-sm"
+            >
+              MAIN MENU
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -24,6 +24,7 @@ import {
   type ShotStyle,
   type AIPlan,
 } from '@/lib/game'
+import { INPUT } from '@/lib/input'
 
 const V = new THREE.Vector3()
 const V2 = new THREE.Vector3()
@@ -677,6 +678,11 @@ export default function GameLoop() {
   const camInit = useRef(false)
   const defCamBlend = useRef(0)
   const { camera } = useThree()
+  // Gamepad state (polled every frame - the Gamepad API has no events
+  // for buttons, so we track previous frame state to detect edges)
+  const padPrev = useRef<boolean[]>([])
+  const padMove = useRef({ x: 0, z: 0 })
+  const padSprint = useRef(false)
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -853,9 +859,66 @@ export default function GameLoop() {
     }
   }
 
+  // ---------- Gamepad (polled - the API is stateless) ----------
+  // Standard mapping: A/Cross shoot-dunk-block (hold to fill the meter),
+  // X/Square pass-switch, B/Circle steal, any shoulder/trigger sprint,
+  // Start restarts after game over. Left stick or D-pad moves.
+  function pollGamepad() {
+    padMove.current.x = 0
+    padMove.current.z = 0
+    padSprint.current = false
+    const pads =
+      typeof navigator !== 'undefined' && navigator.getGamepads
+        ? navigator.getGamepads()
+        : null
+    if (!pads) return
+    for (const pad of pads) {
+      if (!pad || !pad.connected) continue
+      const dead = 0.22
+      const ax = pad.axes[0] ?? 0
+      const az = pad.axes[1] ?? 0
+      if (Math.abs(ax) > dead) padMove.current.x += ax
+      if (Math.abs(az) > dead) padMove.current.z += az
+      const btn = (i: number) => pad.buttons[i]?.pressed ?? false
+      // D-pad fallback
+      if (btn(12)) padMove.current.z -= 1
+      if (btn(13)) padMove.current.z += 1
+      if (btn(14)) padMove.current.x -= 1
+      if (btn(15)) padMove.current.x += 1
+      if (btn(4) || btn(5) || btn(6) || btn(7)) padSprint.current = true
+
+      const prev = padPrev.current
+      // A (0): shoot / dunk / block - hold-release like Space
+      if (btn(0) && !prev[0]) onSpaceDown()
+      if (!btn(0) && prev[0]) onSpaceUp()
+      // X (2): pass / switch player
+      if (btn(2) && !prev[2]) onPassOrSwitch()
+      // B (1): steal
+      if (btn(1) && !prev[1]) onSteal()
+      // Start (9): play again
+      if (btn(9) && !prev[9] && G.phase === 'over') restart()
+      padPrev.current = pad.buttons.map((b) => b.pressed)
+      break // one controller drives the game
+    }
+  }
+
+  // Touch buttons queue one-shot actions into the shared INPUT bus
+  function consumeInputQueue() {
+    for (const a of INPUT.queue) {
+      if (a === 'shootDown') onSpaceDown()
+      else if (a === 'shootUp') onSpaceUp()
+      else if (a === 'pass') onPassOrSwitch()
+      else if (a === 'steal') onSteal()
+      else if (a === 'restart' && G.phase === 'over') restart()
+    }
+    INPUT.queue.length = 0
+  }
+
   // ---------- Per-frame simulation ----------
   useFrame((state, rawDt) => {
     const dt = Math.min(rawDt, 0.05)
+    pollGamepad()
+    consumeInputQueue()
     G.time += dt
     if (G.messageT > 0) G.messageT -= dt
     if (stealCooldown.current > 0) stealCooldown.current -= dt
@@ -966,6 +1029,18 @@ export default function GameLoop() {
     if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1
     if (k.has('KeyD') || k.has('ArrowRight')) mx += 1
 
+    // Touch joystick + gamepad stick share the same screen-space convention
+    mx += INPUT.moveX + padMove.current.x
+    mz += INPUT.moveZ + padMove.current.z
+    const mLen = Math.hypot(mx, mz)
+    if (mLen > 1) {
+      mx /= mLen
+      mz /= mLen
+    } else if (mLen < 0.12) {
+      mx = 0
+      mz = 0
+    }
+
     // CAMERA-RELATIVE input: W always pushes "up the screen" no matter how
     // the camera is oriented. Critical in 5v5 where the broadcast camera
     // films from the sideline - without this WASD feels completely chaotic.
@@ -993,7 +1068,11 @@ export default function GameLoop() {
       mz /= len
       // Sharp cut with the ball near a defender = ankle-break chance
       if (hasBall) tryAnkleBreak(me, mx, mz)
-      const sprint = k.has('ShiftLeft') || k.has('ShiftRight')
+      const sprint =
+        k.has('ShiftLeft') ||
+        k.has('ShiftRight') ||
+        INPUT.sprint ||
+        padSprint.current
       // Defense is snappier: higher accel + a small speed edge so you can
       // actually stay in front of the AI handler.
       // The larger 5v5 court gets a speed bump so running the floor
