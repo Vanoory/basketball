@@ -38,10 +38,10 @@ export default function PixelBasketball() {
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
-          shadow-camera-left={-14}
-          shadow-camera-right={14}
-          shadow-camera-top={14}
-          shadow-camera-bottom={-16}
+          shadow-camera-left={-17}
+          shadow-camera-right={17}
+          shadow-camera-top={17}
+          shadow-camera-bottom={-19}
           shadow-camera-far={40}
           shadow-bias={-0.0004}
         />
@@ -57,10 +57,18 @@ export default function PixelBasketball() {
           color="#7da4dd"
         />
         {/* Rim spotlight glow */}
-        <pointLight position={[0, 5, -9.4]} intensity={14} color="#ffedd5" distance={9} />
+        <pointLight
+          position={[0, 5, mode === '5v5' ? -11.9 : -9.4]}
+          intensity={14}
+          color="#ffedd5"
+          distance={9}
+        />
         {mode === '5v5' ? (
-          // Second basket glow on the full court
-          <pointLight position={[0, 5, 9.4]} intensity={14} color="#ffedd5" distance={9} />
+          <>
+            {/* Second basket glow + midcourt wash on the full court */}
+            <pointLight position={[0, 5, 11.9]} intensity={14} color="#ffedd5" distance={9} />
+            <pointLight position={[0, 6, 0]} intensity={6} color="#fde8c8" distance={16} />
+          </>
         ) : (
           // Warm court wash from the open half-court side
           <pointLight position={[0, 4, 4]} intensity={5} color="#fde8c8" distance={14} />
