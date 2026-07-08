@@ -81,6 +81,13 @@ export const MP = {
   // GUEST side: latest snapshot from the host
   snapshot: null as Snapshot | null,
   snapshotFresh: false,
+  // GUEST side: timestamped snapshot buffer for jitter-free interpolation.
+  // The renderer draws slightly in the past, blending between the two
+  // packets that straddle the render time - this is what removes the
+  // teleporting/rubber-banding when network delivery is uneven.
+  snapBuf: [] as { t: number; snap: Snapshot }[],
+  // Smoothed ms between received snapshots (drives the interp delay)
+  snapInterval: 50,
   // GUEST side: outgoing input accumulator (sent on an interval)
   outInput: { mx: 0, mz: 0, sprint: false, actions: [] as MpAction[] },
 }
@@ -221,7 +228,19 @@ export function joinRoom(
     cb.onStart(payload as RoomSettings)
   })
   ch.on('broadcast', { event: 'state' }, ({ payload }) => {
-    MP.snapshot = payload as Snapshot
+    const snap = payload as Snapshot
+    const now = performance.now()
+    const buf = MP.snapBuf
+    const last = buf[buf.length - 1]
+    if (last) {
+      // Track the smoothed packet interval (capped so one hiccup doesn't
+      // permanently inflate the interpolation delay)
+      const iv = Math.min(now - last.t, 250)
+      MP.snapInterval = MP.snapInterval * 0.9 + iv * 0.1
+    }
+    buf.push({ t: now, snap })
+    if (buf.length > 40) buf.splice(0, buf.length - 40)
+    MP.snapshot = snap
     MP.snapshotFresh = true
   })
   ch.on('presence', { event: 'sync' }, () => {
@@ -279,6 +298,8 @@ export function leaveRoom() {
   MP.peerConnected = false
   MP.snapshot = null
   MP.snapshotFresh = false
+  MP.snapBuf.length = 0
+  MP.snapInterval = 50
   MP.guestControlled = -1
   MP.guestMeter.active = false
   MP.guestInput.mx = 0

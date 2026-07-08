@@ -1071,7 +1071,9 @@ export default function GameLoop() {
       }
       if (MP.peerConnected) {
         snapAcc.current += dt
-        if (snapAcc.current >= 0.05) {
+        // ~30 snapshots/sec: a denser stream gives the guest-side
+        // interpolator more points to blend, which reads as smoother motion
+        if (snapAcc.current >= 1 / 30) {
           snapAcc.current = 0
           sendSnapshot(buildSnapshot())
         }
@@ -1492,64 +1494,173 @@ export default function GameLoop() {
       INPUT.sprint ||
       padSprint.current
 
-    // ----- Incoming snapshot -----
-    const s = MP.snapshot
-    if (!s) return
-    const fresh = MP.snapshotFresh
+    // ----- Incoming snapshots: buffered interpolation -----
+    // Instead of chasing the single latest packet (which rubber-bands and
+    // stutters whenever network delivery is uneven), render slightly in the
+    // past and blend between the two buffered packets that straddle the
+    // render time. Remote players glide smoothly regardless of jitter.
+    const buf = MP.snapBuf
+    if (buf.length === 0) return
     MP.snapshotFresh = false
+    const newest = buf[buf.length - 1].snap
 
-    G.scores[0] = s.s[0]
-    G.scores[1] = s.s[1]
-    G.possession = s.pos
-    G.phase = s.ph === 0 ? 'play' : s.ph === 1 ? 'reset' : 'over'
-    if (s.ctrl >= 0 && G.players[s.ctrl]) G.controlled = s.ctrl
-    G.mustClear = s.mc
-    G.message = s.msg
-    G.messageT = s.msgT
+    // Global (non-positional) state always mirrors the newest packet
+    G.scores[0] = newest.s[0]
+    G.scores[1] = newest.s[1]
+    G.possession = newest.pos
+    G.phase = newest.ph === 0 ? 'play' : newest.ph === 1 ? 'reset' : 'over'
+    if (newest.ctrl >= 0 && G.players[newest.ctrl]) G.controlled = newest.ctrl
+    G.mustClear = newest.mc
+    G.message = newest.msg
+    G.messageT = newest.msgT
     // The guest's shot meter is simulated on the host and mirrored here
-    G.meterActive = s.gm[0] > 0.5
-    G.meterValue = s.gm[1]
-    G.meterWindow = [s.gm[2], s.gm[3]]
+    G.meterActive = newest.gm[0] > 0.5
+    G.meterValue = newest.gm[1]
+    G.meterWindow = [newest.gm[2], newest.gm[3]]
 
-    const kLerp = 1 - Math.exp(-14 * dt)
-    for (let i = 0; i < s.p.length; i++) {
+    // Render ~2 packet intervals in the past (plus a jitter margin)
+    const now = performance.now()
+    const delay = THREE.MathUtils.clamp(MP.snapInterval * 2 + 25, 70, 300)
+    const renderT = now - delay
+
+    // Drop packets we've fully passed (always keep at least two)
+    while (buf.length > 2 && buf[1].t <= renderT) buf.shift()
+
+    const A = buf[0]
+    const B = buf.length > 1 ? buf[1] : buf[0]
+    const span = B.t - A.t
+    const alpha =
+      span > 0.001 ? THREE.MathUtils.clamp((renderT - A.t) / span, 0, 1) : 1
+    // Seconds we're past the newest usable packet (stream hiccup) - used to
+    // extrapolate the ball so it keeps flying instead of freezing mid-air
+    const over = Math.min(Math.max(0, (renderT - B.t) / 1000), 0.2)
+
+    const sA = A.snap
+    const sB = B.snap
+    const gapSec = Math.max(span / 1000, 0.0001)
+    const playing = G.phase === 'play'
+
+    // Client-side lead for OUR OWN player: project him ahead along the live
+    // input so movement responds instantly instead of a full round-trip
+    // later. He stays anchored to the host position, just leads it a bit.
+    let leadX = 0
+    let leadZ = 0
+    const myId = G.controlled
+
+    for (let i = 0; i < sB.p.length; i++) {
       const pl = G.players[i]
-      const ps = s.p[i]
-      if (!pl || !ps) continue
-      V.set(ps[0], ps[1], ps[2])
-      // Teleport on big gaps (resets), smooth-lerp otherwise
-      if (pl.pos.distanceToSquared(V) > 9) pl.pos.copy(V)
-      else pl.pos.lerp(V, kLerp)
-      let df = ps[3] - pl.facing
+      const pb = sB.p[i]
+      const pa = sA.p[i] ?? pb
+      if (!pl || !pb) continue
+
+      // Interpolated host position at the render time
+      V.set(
+        THREE.MathUtils.lerp(pa[0], pb[0], alpha),
+        THREE.MathUtils.lerp(pa[1], pb[1], alpha),
+        THREE.MathUtils.lerp(pa[2], pb[2], alpha),
+      )
+
+      // Shortest-angle interpolated facing
+      let df = pb[3] - pa[3]
       while (df > Math.PI) df -= Math.PI * 2
       while (df < -Math.PI) df += Math.PI * 2
-      pl.facing += df * Math.min(1, 18 * dt)
-      pl.anim = ANIMS[ps[4]] ?? 'idle'
-      // animT drives the animation curves: take the host value on a fresh
-      // packet, advance locally between packets so motion stays smooth
-      if (fresh) pl.animT = ps[5]
-      else pl.animT += dt
-      pl.speed = ps[6]
-      pl.shotStyle = (ps[7] as ShotStyle) ?? 0
-      pl.dunkStyle = ps[8]
-      if (fresh) pl.dunkT = ps[9]
-      else if (pl.anim === 'dunk') pl.dunkT += dt
-      pl.dunking = pl.anim === 'dunk'
-      pl.stunT = ps[10]
-      pl.stumbleT = ps[11]
-      pl.crossLean = ps[12]
-      pl.grounded = ps[13] > 0.5
-      pl.celebrateT = ps[14]
+      let face = pa[3] + df * alpha
+
+      const animName = ANIMS[pb[4]] ?? 'idle'
+      const canLead =
+        i === myId &&
+        playing &&
+        pb[13] > 0.5 && // grounded
+        pb[10] <= 0 && // not stunned
+        pb[11] <= 0 && // not stumbling
+        animName !== 'shoot' &&
+        animName !== 'dunk'
+
+      if (canLead && (mx !== 0 || mz !== 0)) {
+        const hasBall = newest.b[6] === 0 && newest.b[7] === i
+        const defending = newest.pos !== pl.team
+        const sprint = MP.outInput.sprint
+        const modeBoost = G.mode === '5v5' ? 1.12 : 1
+        const spd =
+          (sprint
+            ? hasBall
+              ? 6.4
+              : defending
+                ? 7.4
+                : 7
+            : defending
+              ? 5.2
+              : 4.6) * modeBoost
+        const leadT = Math.min((delay + 90) / 1000, 0.28)
+        const ml = Math.hypot(mx, mz) || 1
+        leadX = (mx / ml) * spd * leadT
+        leadZ = (mz / ml) * spd * leadT
+        V.x += leadX
+        V.z += leadZ
+        // Face our own input immediately for responsive dribbling
+        face = Math.atan2(mx, mz)
+      }
+
+      if (pl.pos.distanceToSquared(V) > 9) {
+        // Teleport on big gaps (possession resets)
+        pl.pos.copy(V)
+      } else if (i === myId) {
+        // Our own player: smooth toward the led position so lead on/off
+        // transitions (starting/stopping) never pop
+        pl.pos.lerp(V, 1 - Math.exp(-18 * dt))
+      } else {
+        // Everyone else: the buffered interpolation is already smooth
+        pl.pos.copy(V)
+      }
+
+      let dfp = face - pl.facing
+      while (dfp > Math.PI) dfp -= Math.PI * 2
+      while (dfp < -Math.PI) dfp += Math.PI * 2
+      pl.facing += dfp * Math.min(1, 20 * dt)
+
+      pl.anim = animName
+      // animT drives the animation curves: interpolate it when both packets
+      // share the same anim, otherwise rewind the newer packet's clock to
+      // the render time so fresh animations start from their beginning
+      pl.animT =
+        pa[4] === pb[4]
+          ? THREE.MathUtils.lerp(pa[5], pb[5], alpha) + over
+          : Math.max(0, pb[5] - (1 - alpha) * gapSec) + over
+      pl.speed = pb[6]
+      pl.shotStyle = (pb[7] as ShotStyle) ?? 0
+      pl.dunkStyle = pb[8]
+      pl.dunkT =
+        pa[4] === pb[4] && animName === 'dunk'
+          ? THREE.MathUtils.lerp(pa[9], pb[9], alpha) + over
+          : pb[9]
+      pl.dunking = animName === 'dunk'
+      pl.stunT = pb[10]
+      pl.stumbleT = pb[11]
+      pl.crossLean = pb[12]
+      pl.grounded = pb[13] > 0.5
+      pl.celebrateT = pb[14]
     }
 
+    // Ball: same buffered interpolation + velocity extrapolation on hiccups
     const b = G.ball
-    V.set(s.b[0], s.b[1], s.b[2])
-    if (b.pos.distanceToSquared(V) > 9) b.pos.copy(V)
-    else b.pos.lerp(V, kLerp)
-    b.vel.set(s.b[3], s.b[4], s.b[5])
-    b.state = BALL_STATES[s.b[6]] ?? 'loose'
-    b.holder = s.b[7]
-    b.spin = s.b[8]
+    const ba = sA.b
+    const bb = sB.b
+    V.set(
+      THREE.MathUtils.lerp(ba[0], bb[0], alpha) + bb[3] * over,
+      THREE.MathUtils.lerp(ba[1], bb[1], alpha) + bb[4] * over,
+      THREE.MathUtils.lerp(ba[2], bb[2], alpha) + bb[5] * over,
+    )
+    b.state = BALL_STATES[bb[6]] ?? 'loose'
+    b.holder = bb[7]
+    // If WE hold the ball, carry it with our led position so it stays glued
+    // to the hand instead of trailing a step behind
+    if (b.state === 'held' && b.holder === myId) {
+      V.x += leadX
+      V.z += leadZ
+    }
+    b.pos.copy(V)
+    b.vel.set(bb[3], bb[4], bb[5])
+    b.spin = bb[8]
   }
 
   // ================= END ONLINE FRIEND MODE =================
