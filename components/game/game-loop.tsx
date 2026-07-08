@@ -1588,6 +1588,14 @@ export default function GameLoop() {
 
     for (const p of G.players) {
       if (p.id === G.controlled || p.dunking || p.stunT > 0) continue
+      // ONLINE HOST: the friend's player is human-controlled - never let the
+      // AI move or shoot for him (his input/meter is handled separately)
+      if (
+        MP.role === 'host' &&
+        MP.peerConnected &&
+        p.id === MP.guestControlled
+      )
+        continue
       if (p.stumbleT > 0) {
         // Staggered: can't pursue, just bleed momentum
         applyMove(p, 0, 0, 0, 14, dt)

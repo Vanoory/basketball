@@ -94,6 +94,12 @@ function client() {
     supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        // The realtime client throttles broadcasts to 10 msgs/sec by default,
+        // but the host streams ~20 snapshots/sec and the guest ~30 inputs/sec.
+        // Without raising this cap messages queue up and the game stutters.
+        realtime: { params: { eventsPerSecond: 50 } },
+      },
     )
   }
   return supabase
