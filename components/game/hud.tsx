@@ -19,6 +19,7 @@ import {
   joinRoom,
   leaveRoom,
   makeRoomCode,
+  mpAvailable,
   type RoomSettings,
 } from '@/lib/multiplayer'
 
@@ -82,6 +83,10 @@ export default function Hud() {
 
   // Host: everything picked - open the room and wait for the friend
   function createRoom() {
+    if (!mpAvailable()) {
+      setNetStatus('ONLINE PLAY IS NOT CONFIGURED')
+      return
+    }
     const code = makeRoomCode()
     setRoomCode(code)
     setNetStatus('WAITING FOR YOUR FRIEND...')

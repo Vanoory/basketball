@@ -89,12 +89,23 @@ let supabase: ReturnType<typeof createClient> | null = null
 let channel: RealtimeChannel | null = null
 let sendTimer: ReturnType<typeof setInterval> | null = null
 
+export function mpAvailable() {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  )
+}
+
 function client() {
   if (!supabase) {
-    supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    if (!url || !key) {
+      throw new Error(
+        'Online play is not configured (missing Supabase settings).',
+      )
+    }
+    supabase = createClient(url, key, {
         // The realtime client throttles broadcasts to 10 msgs/sec by default,
         // but the host streams ~20 snapshots/sec and the guest ~30 inputs/sec.
         // Without raising this cap messages queue up and the game stutters.
@@ -188,6 +199,10 @@ export function joinRoom(
   },
 ) {
   leaveRoom()
+  if (!mpAvailable()) {
+    cb.onError('Online play is not configured (missing Supabase settings).')
+    return
+  }
   MP.active = true
   MP.role = 'guest'
   MP.code = code
