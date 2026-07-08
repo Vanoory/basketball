@@ -29,6 +29,10 @@ export interface GuestInputMsg {
 export type PlayerSnap = number[]
 
 export interface Snapshot {
+  // Host clock (performance.now()) at send time. Interpolating on the HOST
+  // timeline instead of packet-arrival time is what keeps motion smooth even
+  // when the network delivers packets in uneven bursts.
+  t: number
   p: PlayerSnap[]
   // ball: [x, y, z, vx, vy, vz, stateIdx, holder, spin]
   b: number[]
@@ -85,9 +89,17 @@ export const MP = {
   // The renderer draws slightly in the past, blending between the two
   // packets that straddle the render time - this is what removes the
   // teleporting/rubber-banding when network delivery is uneven.
+  // Entries are keyed by HOST send time (snap.t), not arrival time, so
+  // bursty delivery doesn't corrupt the interpolation spans.
   snapBuf: [] as { t: number; snap: Snapshot }[],
-  // Smoothed ms between received snapshots (drives the interp delay)
+  // Smoothed ms between snapshots measured on the host clock (stable ~33ms)
   snapInterval: 50,
+  // host-clock -> local-clock mapping: local ≈ hostT + clockOffset.
+  // Tracks the FASTEST observed delivery so delayed packets read as jitter.
+  clockOffset: 0,
+  clockInit: false,
+  // Smoothed delivery jitter (ms) - drives the adaptive interp delay
+  jitter: 0,
   // GUEST side: outgoing input accumulator (sent on an interval)
   outInput: { mx: 0, mz: 0, sprint: false, actions: [] as MpAction[] },
 }
@@ -231,14 +243,37 @@ export function joinRoom(
     const snap = payload as Snapshot
     const now = performance.now()
     const buf = MP.snapBuf
+    const hostT = typeof snap.t === 'number' ? snap.t : now
+
+    // ---- Host-clock -> local-clock sync ----
+    // offset = arrival - hostSendTime. The minimum over time is the fastest
+    // delivery path; anything above it is network jitter. Snap DOWN fast
+    // (found a faster path), drift UP slowly (clocks/skew changed).
+    const off = now - hostT
+    if (!MP.clockInit) {
+      MP.clockInit = true
+      MP.clockOffset = off
+      MP.jitter = 0
+    } else {
+      const dev = off - MP.clockOffset
+      if (dev < 0) {
+        MP.clockOffset = off
+      } else {
+        MP.clockOffset += Math.min(dev, 80) * 0.015
+        MP.jitter = MP.jitter * 0.9 + Math.min(dev, 200) * 0.1
+      }
+    }
+
     const last = buf[buf.length - 1]
     if (last) {
-      // Track the smoothed packet interval (capped so one hiccup doesn't
-      // permanently inflate the interpolation delay)
-      const iv = Math.min(now - last.t, 250)
+      // Ignore stale/out-of-order packets entirely
+      if (hostT <= last.t) return
+      // Smoothed packet interval on the HOST clock (capped so one hiccup
+      // doesn't permanently inflate the interpolation delay)
+      const iv = Math.min(hostT - last.t, 250)
       MP.snapInterval = MP.snapInterval * 0.9 + iv * 0.1
     }
-    buf.push({ t: now, snap })
+    buf.push({ t: hostT, snap })
     if (buf.length > 40) buf.splice(0, buf.length - 40)
     MP.snapshot = snap
     MP.snapshotFresh = true
@@ -300,6 +335,9 @@ export function leaveRoom() {
   MP.snapshotFresh = false
   MP.snapBuf.length = 0
   MP.snapInterval = 50
+  MP.clockOffset = 0
+  MP.clockInit = false
+  MP.jitter = 0
   MP.guestControlled = -1
   MP.guestMeter.active = false
   MP.guestInput.mx = 0

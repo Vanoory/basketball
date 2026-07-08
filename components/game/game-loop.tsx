@@ -1074,7 +1074,9 @@ export default function GameLoop() {
         // ~30 snapshots/sec: a denser stream gives the guest-side
         // interpolator more points to blend, which reads as smoother motion
         if (snapAcc.current >= 1 / 30) {
-          snapAcc.current = 0
+          // Subtract instead of resetting so the send rate doesn't drift
+          // slower than intended when frames don't line up exactly
+          snapAcc.current = Math.min(snapAcc.current - 1 / 30, 1 / 30)
           sendSnapshot(buildSnapshot())
         }
       }
@@ -1408,6 +1410,7 @@ export default function GameLoop() {
   function buildSnapshot(): Snapshot {
     const b = G.ball
     return {
+      t: performance.now(),
       p: G.players.map((pl) => [
         pl.pos.x,
         pl.pos.y,
@@ -1518,10 +1521,20 @@ export default function GameLoop() {
     G.meterValue = newest.gm[1]
     G.meterWindow = [newest.gm[2], newest.gm[3]]
 
-    // Render ~2 packet intervals in the past (plus a jitter margin)
+    // Render slightly in the past ON THE HOST TIMELINE. Buffer entries are
+    // keyed by host send time, so interpolation spans stay a clean ~33ms
+    // even when the network delivers packets in uneven bursts (the main
+    // cause of the old stutter/teleporting). The delay adapts to measured
+    // jitter: calm networks render closer to real time, noisy ones buffer
+    // a little more instead of popping.
     const now = performance.now()
-    const delay = THREE.MathUtils.clamp(MP.snapInterval * 2 + 25, 70, 300)
-    const renderT = now - delay
+    const jitterMargin = THREE.MathUtils.clamp(MP.jitter * 3, 10, 130)
+    const delay = THREE.MathUtils.clamp(
+      MP.snapInterval * 1.5 + jitterMargin,
+      60,
+      260,
+    )
+    const renderT = now - MP.clockOffset - delay
 
     // Drop packets we've fully passed (always keep at least two)
     while (buf.length > 2 && buf[1].t <= renderT) buf.shift()
@@ -1559,6 +1572,13 @@ export default function GameLoop() {
         THREE.MathUtils.lerp(pa[1], pb[1], alpha),
         THREE.MathUtils.lerp(pa[2], pb[2], alpha),
       )
+      // Stream hiccup: extrapolate along the last observed velocity so
+      // players keep running instead of freezing then teleporting when the
+      // next packet finally lands
+      if (over > 0) {
+        V.x += ((pb[0] - pa[0]) / gapSec) * over
+        V.z += ((pb[2] - pa[2]) / gapSec) * over
+      }
 
       // Shortest-angle interpolated facing
       let df = pb[3] - pa[3]
