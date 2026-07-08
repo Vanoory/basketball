@@ -145,7 +145,13 @@ export default function Court({
           receiveShadow
         >
           <planeGeometry args={[1.5, floorLen]} />
-          <meshLambertMaterial color={tones[i % tones.length]} />
+          {/* Polished hardwood catches the lights at night; painted park
+              concrete stays matte */}
+          <meshStandardMaterial
+            color={tones[i % tones.length]}
+            roughness={park ? 0.92 : 0.45}
+            metalness={park ? 0 : 0.08}
+          />
         </mesh>
       ))}
       {/* Seams (horizontal breaks - parquet joints / concrete expansion cuts) */}

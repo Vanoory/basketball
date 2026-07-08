@@ -1,6 +1,7 @@
 'use client'
 
 import { Canvas } from '@react-three/fiber'
+import * as THREE from 'three'
 import Court from './court'
 import PlayerMesh from './player-mesh'
 import BallMesh from './ball-mesh'
@@ -23,7 +24,11 @@ export default function PixelBasketball() {
       <Canvas
         dpr={[1, 2]}
         camera={{ position: [0, 8, 14], fov: 50 }}
-        gl={{ antialias: true }}
+        gl={{
+          antialias: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.18,
+        }}
         shadows
       >
         <color attach="background" args={[park ? '#7ec3e8' : '#0f1d33']} />

@@ -1618,10 +1618,14 @@ export default function GameLoop() {
             : d > 3
               ? p.tendency.mid * 0.25
               : 0
-          const prob = Math.max(
+          let prob = Math.max(
             0.15,
             0.6 - d * 0.028 - contest * 0.35 + spec,
           )
+          // Way beyond real three-point range it's a desperation heave:
+          // the chance collapses fast with every extra meter.
+          const heave = d - (THREE_PT_RADIUS + 1.8)
+          if (heave > 0) prob = Math.max(0.01, 0.1 - heave * 0.03)
           launchShot(p, Math.random() < prob, three ? 3 : 2)
         }
         continue
@@ -1677,6 +1681,31 @@ export default function GameLoop() {
       return
     }
 
+    // 5v5 TRANSITION: in the backcourt the handler NEVER shoots. He either
+    // hits a teammate running the floor ahead of the ball (outlet pass) or
+    // pushes the dribble up himself.
+    if (G.mode === '5v5' && d > THREE_PT_RADIUS + 3.5) {
+      let ahead: PlayerData | null = null
+      let bestGain = 2.5
+      for (const m of G.players) {
+        if (m.team !== p.team || m.id === p.id || m.stunT > 0) continue
+        const gain = d - distToRim(m.pos, m.team)
+        if (gain > bestGain && opennessOf(m) > 1.7) {
+          bestGain = gain
+          ahead = m
+        }
+      }
+      // Outlet the ball ahead - roughly one look per half second of dribbling
+      if (ahead && Math.random() < dt * 1.9) {
+        tryPass(p, ahead.id)
+        return
+      }
+      V2.copy(RG).sub(p.pos).setY(0).normalize()
+      applyMove(p, V2.x, V2.z, 6.4, 9, dt)
+      if (p.grounded) p.anim = 'run'
+      return
+    }
+
     // Right at the rim everyone finishes strong, but only committed
     // drivers hunt this spot on purpose.
     if (d < 2.5 && !G.mustClear && (p.aiPlan === 'drive' || d < 1.9)) {
@@ -1698,16 +1727,17 @@ export default function GameLoop() {
 
     // ----- Plan: hunt a pull-up three -----
     if (p.aiPlan === 'pull3') {
-      const beyondArc = d > THREE_PT_RADIUS + 0.25
-      // Open look from deep: let it fly
-      if (beyondArc && defDist > 1.5 && p.aiTimer <= 0) {
+      // A REAL three-point look: just behind the arc, never a deep heave
+      const inRange = d > THREE_PT_RADIUS + 0.25 && d < THREE_PT_RADIUS + 1.9
+      // Open look from range: let it fly
+      if (inRange && defDist > 1.5 && p.aiTimer <= 0) {
         p.vel.multiplyScalar(0.3)
         beginShotRise(p)
         setMessage('FOR THREE!', 0.9)
         return
       }
       // Crowded at the arc: create space with a step-back three
-      if (beyondArc && defDist < 1.1 && p.aiTimer <= 0 && Math.random() < 0.5) {
+      if (inRange && defDist < 1.1 && p.aiTimer <= 0 && Math.random() < 0.5) {
         V2.copy(p.pos).sub(RG).setY(0).normalize()
         p.vel.x = V2.x * 3.0
         p.vel.z = V2.z * 3.0
@@ -1716,8 +1746,8 @@ export default function GameLoop() {
         setMessage('STEP-BACK THREE!', 1.0)
         return
       }
-      // Not behind the line yet: dribble out to a spot on the arc
-      if (!beyondArc) {
+      // Not at his spot yet (too close OR too deep): work to the arc
+      if (!inRange) {
         V2.copy(p.pos).sub(RG).setY(0).normalize()
         V3.copy(RG).addScaledVector(V2, THREE_PT_RADIUS + 0.7)
         clampCourt(V3, 0.6)
@@ -1726,8 +1756,8 @@ export default function GameLoop() {
         return
       }
       // Behind the arc but smothered too long: bail out of the plan
-      if (p.aiTimer <= -1.2) {
-        if (openMate && bestOpen > 2.0) {
+      if (p.aiTimer <= -0.9) {
+        if (openMate && bestOpen > 1.8) {
           tryPass(p, openMate.id)
           return
         }
@@ -1770,8 +1800,8 @@ export default function GameLoop() {
         return
       }
       // Stuck too long: kick out or switch plans
-      if (p.aiTimer <= -1.4) {
-        if (openMate && bestOpen > 2.0) {
+      if (p.aiTimer <= -1.0) {
+        if (openMate && bestOpen > 1.8) {
           tryPass(p, openMate.id)
           return
         }
@@ -1788,8 +1818,20 @@ export default function GameLoop() {
 
     // ----- Plan: probe (patient) or drive (downhill) -----
     if (p.aiTimer <= 0) {
+      // BALL MOVEMENT: swing it to a clearly more open teammate instead of
+      // forcing something - this is what makes the AI feel like a team.
+      if (
+        openMate &&
+        bestOpen > 2.2 &&
+        bestOpen > defDist + 0.8 &&
+        Math.random() < 0.45
+      ) {
+        tryPass(p, openMate.id)
+        p.aiTimer = 1.2 + Math.random()
+        return
+      }
       // Open jumper opportunistically even while driving
-      if (defDist > 1.8 && d < 8 && Math.random() < 0.5) {
+      if (defDist > 1.8 && d < 7.5 && Math.random() < 0.4) {
         beginShotRise(p)
         return
       }
@@ -1803,7 +1845,7 @@ export default function GameLoop() {
         return
       }
       // Kick out to a wide-open teammate when pressured
-      if (defDist < 1.3 && openMate && bestOpen > 2.4) {
+      if (defDist < 1.6 && openMate && bestOpen > 2.0) {
         tryPass(p, openMate.id)
         p.aiTimer = 1.6 + Math.random() * 1.5
         return
