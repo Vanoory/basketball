@@ -694,6 +694,10 @@ export default function GameLoop() {
   // Online friend mode: host-side guest steal cooldown + snapshot pacing
   const guestStealCd = useRef(0)
   const snapAcc = useRef(0)
+  // Guest-side client prediction: locally simulated position of OUR player.
+  // Movement is integrated from live input every frame (instant response)
+  // and continuously reconciled toward the host's authoritative position.
+  const guestPred = useRef({ id: -1, x: 0, z: 0, init: false })
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -1558,6 +1562,10 @@ export default function GameLoop() {
     // later. He stays anchored to the host position, just leads it a bit.
     let leadX = 0
     let leadZ = 0
+    // Set when we're moving locally but the host still reports idle: start
+    // the run animation immediately instead of waiting for the echo
+    let localRun = false
+    let localRunSpd = 0
     const myId = G.controlled
 
     for (let i = 0; i < sB.p.length; i++) {
@@ -1596,38 +1604,87 @@ export default function GameLoop() {
         animName !== 'shoot' &&
         animName !== 'dunk'
 
-      if (canLead && (mx !== 0 || mz !== 0)) {
-        const hasBall = newest.b[6] === 0 && newest.b[7] === i
-        const defending = newest.pos !== pl.team
-        const sprint = MP.outInput.sprint
-        const modeBoost = G.mode === '5v5' ? 1.12 : 1
-        const spd =
-          (sprint
-            ? hasBall
-              ? 6.4
-              : defending
-                ? 7.4
-                : 7
-            : defending
-              ? 5.2
-              : 4.6) * modeBoost
-        const leadT = Math.min((delay + 90) / 1000, 0.28)
-        const ml = Math.hypot(mx, mz) || 1
-        leadX = (mx / ml) * spd * leadT
-        leadZ = (mz / ml) * spd * leadT
-        V.x += leadX
-        V.z += leadZ
-        // Face our own input immediately for responsive dribbling
-        face = Math.atan2(mx, mz)
-      }
+      if (i === myId) {
+        // ===== CLIENT-SIDE PREDICTION for our own player =====
+        // Instead of rendering the host's (delayed) position with an offset,
+        // we run our own movement locally - position responds to input THIS
+        // frame - and continuously reconcile toward where the host says we
+        // are, extrapolated by the pipeline latency. Feels local, stays
+        // authoritative.
+        const pred = guestPred.current
+        const bigGap = pred.init
+          ? (pred.x - V.x) ** 2 + (pred.z - V.z) ** 2 > 9
+          : true
+        if (pred.id !== myId || bigGap) {
+          // First frame / possession reset / teleport: adopt host position
+          pred.id = myId
+          pred.x = V.x
+          pred.z = V.z
+          pred.init = true
+        }
 
-      if (pl.pos.distanceToSquared(V) > 9) {
+        if (canLead) {
+          const moving = mx !== 0 || mz !== 0
+          if (moving) {
+            const hasBall = newest.b[6] === 0 && newest.b[7] === i
+            const defending = newest.pos !== pl.team
+            const sprint = MP.outInput.sprint
+            const modeBoost = G.mode === '5v5' ? 1.12 : 1
+            // Same speed table the host sim uses, so prediction and
+            // authority agree and corrections stay tiny
+            const spd =
+              (sprint
+                ? hasBall
+                  ? 6.4
+                  : defending
+                    ? 7.4
+                    : 7
+                : defending
+                  ? 5.2
+                  : 4.6) * modeBoost
+            const ml = Math.hypot(mx, mz) || 1
+            pred.x += (mx / ml) * spd * dt
+            pred.z += (mz / ml) * spd * dt
+            // Face our own input immediately for responsive dribbling
+            face = Math.atan2(mx, mz)
+            // Flag: animate the run locally too (applied after the packet
+            // fields are written below, so it isn't overwritten)
+            localRun = true
+            localRunSpd = spd
+          }
+          // Reconcile toward the host position projected forward by the
+          // render delay + one-way trip (where the host will PUT us once
+          // our current input arrives). Gentle pull - imperceptible when
+          // prediction is right, fixes drift when it's not.
+          const latSec = Math.min((delay + 80) / 1000, 0.3)
+          const hvx = (pb[0] - pa[0]) / gapSec
+          const hvz = (pb[2] - pa[2]) / gapSec
+          const tx = V.x + hvx * latSec
+          const tz = V.z + hvz * latSec
+          const pull = 1 - Math.exp((moving ? -2.5 : -8) * dt)
+          pred.x += (tx - pred.x) * pull
+          pred.z += (tz - pred.z) * pull
+          // Never let prediction stray far from authority
+          const ex = pred.x - V.x
+          const ez = pred.z - V.z
+          const el = Math.hypot(ex, ez)
+          const maxErr = 2.2
+          if (el > maxErr) {
+            pred.x = V.x + (ex / el) * maxErr
+            pred.z = V.z + (ez / el) * maxErr
+          }
+          leadX = pred.x - V.x
+          leadZ = pred.z - V.z
+          pl.pos.set(pred.x, V.y, pred.z)
+        } else {
+          // Shooting/dunking/stunned/airborne: follow the host exactly
+          pred.x = V.x
+          pred.z = V.z
+          pl.pos.copy(V)
+        }
+      } else if (pl.pos.distanceToSquared(V) > 9) {
         // Teleport on big gaps (possession resets)
         pl.pos.copy(V)
-      } else if (i === myId) {
-        // Our own player: smooth toward the led position so lead on/off
-        // transitions (starting/stopping) never pop
-        pl.pos.lerp(V, 1 - Math.exp(-18 * dt))
       } else {
         // Everyone else: the buffered interpolation is already smooth
         pl.pos.copy(V)
@@ -1659,6 +1716,15 @@ export default function GameLoop() {
       pl.crossLean = pb[12]
       pl.grounded = pb[13] > 0.5
       pl.celebrateT = pb[14]
+
+      // Local run override for our own player: the host hasn't seen our
+      // input yet but we're already moving - animate it now. G.time keeps
+      // the run cycle phase continuous across packets.
+      if (i === myId && localRun && (pl.anim === 'idle' || pl.anim === 'shuffle')) {
+        pl.anim = 'run'
+        pl.animT = G.time
+        pl.speed = localRunSpd
+      }
     }
 
     // Ball: same buffered interpolation + velocity extrapolation on hiccups

@@ -147,6 +147,26 @@ export function makeRoomCode() {
 export function queueMpAction(a: MpAction) {
   if (MP.outInput.actions.length > 8) return
   MP.outInput.actions.push(a)
+  // Fire the packet NOW instead of waiting for the next interval tick.
+  // Shaves up to 33ms off every shot/pass/steal, which is very noticeable
+  // on top of the unavoidable network latency.
+  flushGuestInput()
+}
+
+// Send the current input state to the host immediately
+function flushGuestInput() {
+  if (!channel || MP.role !== 'guest' || !MP.peerConnected) return
+  const out = MP.outInput
+  channel.send({
+    type: 'broadcast',
+    event: 'input',
+    payload: {
+      mx: out.mx,
+      mz: out.mz,
+      sprint: out.sprint,
+      actions: out.actions.splice(0, out.actions.length),
+    } satisfies GuestInputMsg,
+  })
 }
 
 // ---------- Host ----------
@@ -295,21 +315,9 @@ export function joinRoom(
     }
   })
 
-  // Stream input to the host ~30x/sec
-  sendTimer = setInterval(() => {
-    if (!channel || !MP.peerConnected) return
-    const out = MP.outInput
-    channel.send({
-      type: 'broadcast',
-      event: 'input',
-      payload: {
-        mx: out.mx,
-        mz: out.mz,
-        sprint: out.sprint,
-        actions: out.actions.splice(0, out.actions.length),
-      } satisfies GuestInputMsg,
-    })
-  }, 33)
+  // Stream input to the host ~30x/sec (one-shot actions also flush
+  // immediately via queueMpAction, this keeps movement fresh)
+  sendTimer = setInterval(flushGuestInput, 33)
 }
 
 // ---------- Shared ----------
