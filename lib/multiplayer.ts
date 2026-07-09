@@ -12,6 +12,7 @@ export interface RoomSettings {
   map: MapId
   kit0: number // host team (team 0)
   kit1: number // guest team (team 1)
+  quarterMin?: number // minutes per quarter in 5v5 (2-4); undefined = default
 }
 
 export type MpAction = 'shootDown' | 'shootUp' | 'pass' | 'steal' | 'restart'
@@ -39,6 +40,8 @@ export interface Snapshot {
   s: [number, number] // scores
   pos: 0 | 1 // possession
   ph: number // phase idx: 0 play, 1 reset, 2 over
+  q?: number // current quarter (timed 5v5)
+  cl?: number // seconds left on the clock (timed 5v5)
   ctrl: number // guest's controlled player id
   msg: string
   msgT: number

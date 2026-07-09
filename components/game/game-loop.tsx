@@ -369,7 +369,8 @@ function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
     rimOf(team),
     scorer?.colors.jersey,
   )
-  if (G.scores[team] >= WIN_SCORE) {
+  // 3v3 ends at 21; 5v5 is timed and only ends when the clock runs out
+  if (!G.timed && G.scores[team] >= WIN_SCORE) {
     G.phase = 'over'
     setMessage(team === 0 ? 'YOU WIN!' : 'RED TEAM WINS!', 99)
   } else {
@@ -384,6 +385,30 @@ function scoreBasket(team: 0 | 1, points: number, scorer?: PlayerData) {
       G.controlled = nearestOf(0, rimGroundOf(team))
     }
   }
+}
+
+// Timed 5v5: end of a quarter. Advance to the next quarter, go to overtime
+// on a tie after Q4, or finish the game. Host-only (guests get it via snapshot).
+function endQuarter() {
+  const tied = G.scores[0] === G.scores[1]
+  if (G.quarter >= 4 && !tied) {
+    G.phase = 'over'
+    setMessage(G.scores[0] > G.scores[1] ? 'YOU WIN!' : 'RED TEAM WINS!', 99)
+    return
+  }
+  G.quarter += 1
+  G.clock = G.quarterLength
+  // Possession alternates each period (like the arrow); teams also swap the
+  // basket they attack via a check-ball reset.
+  const startTeam = (((G.quarter - 1) % 2) as 0 | 1)
+  const label =
+    G.quarter > 4
+      ? G.quarter === 5
+        ? 'OVERTIME!'
+        : `OVERTIME ${G.quarter - 4}!`
+      : `QUARTER ${G.quarter}`
+  setMessage(label, 2.5)
+  startReset(startTeam, 1.6)
 }
 
 // ---------- Possession reset ("check ball") ----------
@@ -744,7 +769,13 @@ export default function GameLoop() {
     G.phase = 'reset'
     G.phaseT = 0.5
     pendingResetTeam = 0
-    setMessage('FIRST TO 21', 2)
+    if (G.timed) {
+      G.quarter = 1
+      G.clock = G.quarterLength
+      setMessage('Q1 - TIP OFF', 2)
+    } else {
+      setMessage('FIRST TO 21', 2)
+    }
   }
 
   function onSpaceDown() {
@@ -1034,6 +1065,15 @@ export default function GameLoop() {
         if (h.team === G.possession && isThree(h.pos, h.team)) {
           G.mustClear = false
           setMessage('BALL IN - GO!', 1.1)
+        }
+      }
+
+      // Timed 5v5: run the game clock only while the ball is live
+      if (G.timed) {
+        G.clock -= dt
+        if (G.clock <= 0) {
+          G.clock = 0
+          endQuarter()
         }
       }
     }
@@ -1446,6 +1486,8 @@ export default function GameLoop() {
       s: [G.scores[0], G.scores[1]],
       pos: G.possession,
       ph: G.phase === 'play' ? 0 : G.phase === 'reset' ? 1 : 2,
+      q: G.quarter,
+      cl: G.clock,
       ctrl: MP.guestControlled,
       msg: G.message,
       msgT: G.messageT,
@@ -1516,6 +1558,8 @@ export default function GameLoop() {
     G.scores[1] = newest.s[1]
     G.possession = newest.pos
     G.phase = newest.ph === 0 ? 'play' : newest.ph === 1 ? 'reset' : 'over'
+    if (typeof newest.q === 'number') G.quarter = newest.q
+    if (typeof newest.cl === 'number') G.clock = newest.cl
     if (newest.ctrl >= 0 && G.players[newest.ctrl]) G.controlled = newest.ctrl
     G.mustClear = newest.mc
     G.message = newest.msg
@@ -2716,6 +2760,11 @@ export default function GameLoop() {
       patch.winner = G.scores[0] > G.scores[1] ? 0 : 1
     }
     if (hud.mode !== G.mode) patch.mode = G.mode
+    if (hud.timed !== G.timed) patch.timed = G.timed
+    if (hud.quarter !== G.quarter) patch.quarter = G.quarter
+    // Only re-render when the displayed whole second changes
+    const clk = Math.ceil(G.clock)
+    if (hud.clock !== clk) patch.clock = clk
     if (Object.keys(patch).length > 0) hud.setHud(patch)
   }
 

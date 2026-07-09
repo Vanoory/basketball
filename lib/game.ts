@@ -52,6 +52,9 @@ export const SETTINGS = {
   map: 'city' as MapId,
   kit0: 0, // index into JERSEY_KITS for team 0 (you)
   kit1: 1, // index into JERSEY_KITS for team 1 (cpu)
+  // 5v5 is played as 4 timed quarters instead of first-to-21. Minutes per
+  // quarter, chosen on the setup screen (2-4).
+  quarterMinutes: 3,
 }
 
 // ---------- Court paint (custom user drawing overlaid on the floor) ----------
@@ -218,6 +221,11 @@ export interface GameData {
   time: number
   mustClear: boolean // new possession must take the ball beyond the arc
   inboundTeam: -1 | 0 | 1 // after a made basket only this team may pick it up
+  // ---- Timed game (5v5 only) ----
+  timed: boolean // true in 5v5: play 4 quarters on a clock instead of to 21
+  quarter: number // 1..4, then 5+ = overtime
+  clock: number // seconds remaining in the current quarter/OT
+  quarterLength: number // seconds in each quarter (from SETTINGS at kickoff)
 }
 
 // ---------- Factory ----------
@@ -347,6 +355,8 @@ export function createGame(mode: GameMode = '3v3'): GameData {
         ]
   const bounds = mode === '3v3' ? COURT_3V3 : COURT_5V5
   Object.assign(COURT, bounds)
+  const timed = mode === '5v5'
+  const quarterLength = timed ? SETTINGS.quarterMinutes * 60 : 0
   return {
     mode,
     perTeam: mode === '3v3' ? 3 : 5,
@@ -376,7 +386,7 @@ export function createGame(mode: GameMode = '3v3'): GameData {
     meterValue: 0,
     meterWindow: [0.64, 0.8],
     shotDist: 0,
-    message: 'FIRST TO 21 - CHECK BALL',
+    message: timed ? 'Q1 - TIP OFF' : 'FIRST TO 21 - CHECK BALL',
     messageT: 2.5,
     camPos: new THREE.Vector3(0, 8, 14),
     camLook: new THREE.Vector3(0, 1, -4),
@@ -384,6 +394,10 @@ export function createGame(mode: GameMode = '3v3'): GameData {
     time: 0,
     mustClear: false,
     inboundTeam: -1,
+    timed,
+    quarter: 1,
+    clock: quarterLength,
+    quarterLength,
   }
 }
 
@@ -430,6 +444,10 @@ interface HudState {
   winner: 0 | 1
   started: boolean
   mode: GameMode
+  // Timed 5v5 clock, mirrored from the sim (clock is whole seconds)
+  timed: boolean
+  quarter: number
+  clock: number
   map: MapId
   paintVersion: number
   // Online friend mode: mp = playing over the network, myTeam = which team
@@ -450,6 +468,9 @@ export const useHud = create<HudState>((set) => ({
   winner: 0,
   started: false,
   mode: '3v3',
+  timed: false,
+  quarter: 1,
+  clock: 0,
   map: 'city',
   paintVersion: 0,
   mp: false,

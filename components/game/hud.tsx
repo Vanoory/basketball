@@ -27,6 +27,7 @@ type Step =
   | 'mode'
   | 'online'
   | 'onlineMode'
+  | 'quarters'
   | 'join'
   | 'map'
   | 'kits'
@@ -45,6 +46,9 @@ export default function Hud() {
     winner,
     started,
     mode,
+    timed,
+    quarter,
+    clock,
     mp,
     myTeam,
     setHud,
@@ -53,6 +57,7 @@ export default function Hud() {
   const isTouch = useIsTouchDevice()
   const [step, setStep] = useState<Step>('mode')
   const [pickedMode, setPickedMode] = useState<GameMode>('3v3')
+  const [quarterMin, setQuarterMin] = useState(3)
   const [pickedMap, setPickedMap] = useState<MapId>('city')
   const [kit0, setKit0] = useState(0)
   const [kit1, setKit1] = useState(1)
@@ -69,6 +74,7 @@ export default function Hud() {
     SETTINGS.map = pickedMap
     SETTINGS.kit0 = kit0
     SETTINGS.kit1 = kit1
+    SETTINGS.quarterMinutes = quarterMin
     setGameMode(pickedMode)
     setHud({
       started: true,
@@ -96,6 +102,7 @@ export default function Hud() {
       map: pickedMap,
       kit0,
       kit1,
+      quarterMin,
     }
     hostRoom(code, settings, {
       onGuestJoin: () => {
@@ -103,6 +110,7 @@ export default function Hud() {
         SETTINGS.map = settings.map
         SETTINGS.kit0 = settings.kit0
         SETTINGS.kit1 = settings.kit1
+        SETTINGS.quarterMinutes = settings.quarterMin ?? 3
         setGameMode(settings.mode)
         setHud({
           started: true,
@@ -137,6 +145,7 @@ export default function Hud() {
         SETTINGS.map = settings.map
         SETTINGS.kit0 = settings.kit0
         SETTINGS.kit1 = settings.kit1
+        SETTINGS.quarterMinutes = settings.quarterMin ?? 3
         setGameMode(settings.mode)
         setHud({
           started: true,
@@ -187,8 +196,19 @@ export default function Hud() {
           <span>{leftLabel}</span>
           <span className="min-w-6 text-right text-foreground">{scores[0]}</span>
         </div>
-        <div className="flex items-center border-y-4 border-muted bg-background/80 px-3 text-[10px] text-muted-foreground">
-          {mode === '5v5' ? '5V5 - TO 21' : '3V3 - TO 21'}
+        <div className="flex min-w-16 flex-col items-center justify-center border-y-4 border-muted bg-background/80 px-3 text-[10px] text-muted-foreground">
+          {timed ? (
+            <>
+              <span className="text-base leading-none text-foreground tabular-nums md:text-lg">
+                {`${Math.floor(clock / 60)}:${String(Math.max(0, clock % 60)).padStart(2, '0')}`}
+              </span>
+              <span className="mt-0.5 leading-none text-accent">
+                {quarter > 4 ? `OT${quarter - 4}` : `Q${quarter}`}
+              </span>
+            </>
+          ) : (
+            <span>{mode === '5v5' ? '5V5 - TO 21' : '3V3 - TO 21'}</span>
+          )}
         </div>
         <div
           className={`flex items-center gap-2 border-4 bg-muted/90 px-4 py-2 ${
@@ -284,7 +304,10 @@ export default function Hud() {
           </h1>
           <p className="text-sm text-accent md:text-lg">PICK YOUR GAME</p>
           <div className="flex max-w-md flex-col gap-2 text-[10px] leading-relaxed text-muted-foreground md:text-xs">
-            <p>FIRST TO 21 WINS. 2 PTS INSIDE, 3 PTS BEYOND THE ARC.</p>
+            <p>
+              3V3: FIRST TO 21. 5V5: 4 TIMED QUARTERS. 2 PTS INSIDE, 3 BEYOND
+              THE ARC.
+            </p>
             {isTouch ? (
               <>
                 <p>HOLD SHOOT FOR A JUMPER - RELEASE IN THE GREEN ZONE.</p>
@@ -321,13 +344,13 @@ export default function Hud() {
               onClick={() => {
                 setOnline(false)
                 setPickedMode('5v5')
-                setStep('map')
+                setStep('quarters')
               }}
               className="flex w-56 flex-col items-center gap-1 border-4 border-accent bg-accent px-6 py-4 text-accent-foreground shadow-[6px_6px_0_#1e3a8a] transition-transform hover:scale-105"
             >
               <span className="text-sm md:text-base">5 ON 5</span>
               <span className="text-[9px] opacity-80 md:text-[10px]">
-                FULL COURT - TWO BASKETS
+                FULL COURT - 4 QUARTERS
               </span>
             </button>
             <button
@@ -420,19 +443,61 @@ export default function Hud() {
               type="button"
               onClick={() => {
                 setPickedMode('5v5')
-                setStep('map')
+                setStep('quarters')
               }}
               className="flex w-56 flex-col items-center gap-1 border-4 border-accent bg-accent px-6 py-4 text-accent-foreground shadow-[6px_6px_0_#1e3a8a] transition-transform hover:scale-105"
             >
               <span className="text-sm md:text-base">5 ON 5</span>
               <span className="text-[9px] opacity-80 md:text-[10px]">
-                FULL COURT - TWO BASKETS
+                FULL COURT - 4 QUARTERS
               </span>
             </button>
           </div>
           <button
             type="button"
             onClick={() => setStep('online')}
+            className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
+          >
+            BACK
+          </button>
+        </div>
+      )}
+
+      {/* 5v5: pick the quarter length */}
+      {!started && step === 'quarters' && (
+        <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-6 bg-background/90 p-6 text-center">
+          <h2 className="text-xl text-primary md:text-3xl [text-shadow:3px_3px_0_#1e293b]">
+            QUARTER LENGTH
+          </h2>
+          <p className="max-w-md text-[10px] leading-relaxed text-muted-foreground md:text-xs">
+            5V5 IS PLAYED AS 4 QUARTERS ON A GAME CLOCK. LONGER QUARTERS REWARD
+            SKILL AND STRATEGY OVER LUCK. TIED AFTER Q4 GOES TO OVERTIME.
+          </p>
+          <div className="flex flex-col items-center gap-4 md:flex-row">
+            {[2, 3, 4].map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setQuarterMin(m)
+                  setStep('map')
+                }}
+                className={`flex w-40 flex-col items-center gap-1 border-4 px-6 py-4 transition-transform hover:scale-105 ${
+                  quarterMin === m
+                    ? 'border-primary bg-primary text-primary-foreground shadow-[6px_6px_0_#7c2d12]'
+                    : 'border-muted bg-muted text-foreground shadow-[6px_6px_0_#0f172a]'
+                }`}
+              >
+                <span className="text-lg md:text-xl">{m} MIN</span>
+                <span className="text-[9px] opacity-80 md:text-[10px]">
+                  {m * 4} MIN GAME
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setStep(online ? 'onlineMode' : 'mode')}
             className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
           >
             BACK
@@ -579,7 +644,15 @@ export default function Hud() {
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => setStep(online ? 'onlineMode' : 'mode')}
+              onClick={() =>
+                setStep(
+                  pickedMode === '5v5'
+                    ? 'quarters'
+                    : online
+                      ? 'onlineMode'
+                      : 'mode',
+                )
+              }
               className="border-4 border-muted bg-muted px-5 py-2 text-xs text-foreground shadow-[4px_4px_0_#0f172a] transition-transform hover:scale-105"
             >
               BACK
